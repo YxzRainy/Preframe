@@ -12,9 +12,19 @@ interface ProjectSidebarProps {
   files: ResultFile[];
   activeName: string;
   onSelect: (name: string) => void;
+  viewMode?: "documents" | "execution";
+  onViewModeChange?: (mode: "documents" | "execution") => void;
 }
 
-export function ProjectSidebar({ projectName, metadata, files, activeName, onSelect }: ProjectSidebarProps) {
+export function ProjectSidebar({
+  projectName,
+  metadata,
+  files,
+  activeName,
+  onSelect,
+  viewMode = "documents",
+  onViewModeChange,
+}: ProjectSidebarProps) {
   const profile = resolveContentProfile(metadata);
   const contentSubject = profile.contentSubject || "未记录";
   const contentDomain = profile.contentDomain || "未记录";
@@ -26,7 +36,6 @@ export function ProjectSidebar({ projectName, metadata, files, activeName, onSel
   const documentsStatus = metadata.documentsStatus && typeof metadata.documentsStatus === "object" ? metadata.documentsStatus as Record<string, { status?: string; documentStatus?: string }> : {};
   const completedCoreCount = PROJECT_DOCUMENT_DEFINITIONS.filter((definition) => {
     const docStatus = documentsStatus[definition.number];
-    // fallback/failed 不计入完成数
     return docStatus?.documentStatus === "generated" || docStatus?.documentStatus === "repaired" || (!docStatus?.documentStatus && docStatus?.status === "completed");
   }).length;
   const totalCoreCount = PROJECT_DOCUMENT_DEFINITIONS.length;
@@ -57,21 +66,44 @@ export function ProjectSidebar({ projectName, metadata, files, activeName, onSel
 
   const renderFile = (file: ResultFile) => {
     const meta = displayDocumentName(file.name);
-    const active = file.name === activeName;
+    const active = viewMode === "documents" && file.name === activeName;
     const docStatus = documentsStatus[meta.number];
     return (
-      <button type="button" role="tab" aria-selected={active} className={active ? "flow-step active" : "flow-step"} onClick={() => onSelect(file.name)} key={file.name}>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={active}
+        className={active ? "flow-step active" : "flow-step"}
+        onClick={() => {
+          if (viewMode !== "documents" && onViewModeChange) {
+            onViewModeChange("documents");
+          }
+          onSelect(file.name);
+        }}
+        key={file.name}
+      >
         <span className="step-node">{meta.number}</span>
-        <span className="step-copy"><strong>{meta.title}</strong><small>{meta.revised ? "修改版本" : "Markdown 文档"}</small></span>
-        <span className={documentStatusClass(docStatus, meta.revised)}>{documentStatusLabel(docStatus, meta.revised)}</span>
+        <span className="step-copy">
+          <strong>{meta.title}</strong>
+          <small>{meta.revised ? "修改版本" : "Markdown 文档"}</small>
+        </span>
+        <span className={documentStatusClass(docStatus, meta.revised)}>
+          {documentStatusLabel(docStatus, meta.revised)}
+        </span>
       </button>
     );
   };
+
   return (
     <aside className="pipeline-sidebar">
       <div className="pipeline-sidebar-inner">
         <section className="project-identity-card">
-          <div className="project-card-head"><span>当前项目</span><StatusBadge tone={projectStatus === "complete" ? "ready" : projectStatus === "partial" ? "working" : "muted"}>{projectStatus === "complete" ? "已完成" : projectStatus === "partial" ? "部分可用" : "生成失败"}</StatusBadge></div>
+          <div className="project-card-head">
+            <span>当前项目</span>
+            <StatusBadge tone={projectStatus === "complete" ? "ready" : projectStatus === "partial" ? "working" : "muted"}>
+              {projectStatus === "complete" ? "已完成" : projectStatus === "partial" ? "部分可用" : "生成失败"}
+            </StatusBadge>
+          </div>
           <h1>{projectName}</h1>
           <div className="project-meta-chips">
             <div><small>主体</small><span>{contentSubject}</span></div>
@@ -85,6 +117,26 @@ export function ProjectSidebar({ projectName, metadata, files, activeName, onSel
           <div className="project-progress-copy"><span>核心策划文档</span><b>{completedCoreCount} / {totalCoreCount}</b></div>
         </section>
 
+        {/* 视图模式平级切换 */}
+        {onViewModeChange && (
+          <div className="workspace-view-switcher">
+            <button
+              type="button"
+              className={viewMode === "documents" ? "switcher-btn active" : "switcher-btn"}
+              onClick={() => onViewModeChange("documents")}
+            >
+              📄 策划文档
+            </button>
+            <button
+              type="button"
+              className={viewMode === "execution" ? "switcher-btn active" : "switcher-btn"}
+              onClick={() => onViewModeChange("execution")}
+            >
+              🎬 拍摄执行
+            </button>
+          </div>
+        )}
+
         <div className="pipeline-title">
           <div><span className="section-index">步骤 01</span><h2>项目任务流</h2></div>
           <span className="pipeline-count">{completedCoreCount} 份核心文档</span>
@@ -92,8 +144,22 @@ export function ProjectSidebar({ projectName, metadata, files, activeName, onSel
         <div className="step-flow" role="tablist" aria-label="项目文档步骤">
           {primaryFiles.map(renderFile)}
         </div>
-        {extraFiles.length > 0 && <><div className="pipeline-title secondary"><div><h2>附加文件</h2></div><span className="pipeline-count">{extraFiles.length}</span></div><div className="step-flow extras" role="tablist" aria-label="附加项目文件">{extraFiles.map(renderFile)}</div></>}
-        <div className="sidebar-bottom-actions"><div className="sidebar-footnote"><span className="pulse-dot" />本地文件同步正常</div></div>
+        {extraFiles.length > 0 && (
+          <>
+            <div className="pipeline-title secondary">
+              <div><h2>附加文件</h2></div>
+              <span className="pipeline-count">{extraFiles.length}</span>
+            </div>
+            <div className="step-flow extras" role="tablist" aria-label="附加项目文件">
+              {extraFiles.map(renderFile)}
+            </div>
+          </>
+        )}
+        <div className="sidebar-bottom-actions">
+          <div className="sidebar-footnote">
+            <span className="pulse-dot" />本地文件同步正常
+          </div>
+        </div>
       </div>
     </aside>
   );

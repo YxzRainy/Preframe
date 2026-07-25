@@ -10,7 +10,7 @@ import { apiError } from "../../../_utils";
 export const runtime = "nodejs";
 
 // ---------------------------------------------------------------------------
-// 读取 project.json
+// 读取 / 写入 project.json
 // ---------------------------------------------------------------------------
 
 async function readProjectJson(projectDir: string): Promise<Record<string, unknown>> {
@@ -28,7 +28,7 @@ async function writeProjectJson(projectDir: string, data: Record<string, unknown
 }
 
 // ---------------------------------------------------------------------------
-// GET — 读取镜头任务
+// GET — 读取镜头任务（不存在时自动从文档构建）
 // ---------------------------------------------------------------------------
 
 export async function GET(_request: Request, { params }: { params: Promise<{ slug: string }> }) {
@@ -60,6 +60,29 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
 }
 
 // ---------------------------------------------------------------------------
+// POST — 强制重新构建镜头任务（仅覆盖 project.json 中的 shotTasks，不触碰 Markdown）
+// ---------------------------------------------------------------------------
+
+export async function POST(_request: Request, { params }: { params: Promise<{ slug: string }> }) {
+  try {
+    const { slug } = await params;
+    const projectDir = resolveProjectDirectory(slug);
+    const metadata = await readProjectJson(projectDir);
+
+    const project = await readProject(slug);
+    const shotTasks = buildShotTasks(project.files);
+
+    metadata.shotTasks = shotTasks;
+    await writeProjectJson(projectDir, metadata);
+
+    return NextResponse.json({ ok: true, success: true, shotTasks, source: "rebuilt" });
+  } catch (error) {
+    const status = error instanceof Error && error.name === "ProjectNotFoundError" ? 404 : 400;
+    return apiError(error, "project", "镜头任务重新构建失败。", status);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // PATCH — 更新镜头任务
 // ---------------------------------------------------------------------------
 
@@ -76,7 +99,6 @@ interface ShotPatchPayload {
 function validatePatch(body: unknown): ShotPatchPayload[] {
   if (!body || typeof body !== "object") throw new Error("请求体格式无效。");
 
-  // 支持单个对象或数组
   const items: unknown[] = Array.isArray(body) ? body : [body];
   const patches: ShotPatchPayload[] = [];
 
@@ -123,7 +145,6 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ sl
     const projectDir = resolveProjectDirectory(slug);
     const metadata = await readProjectJson(projectDir);
 
-    // 如果不存在 shotTasks，先按需构建
     if (!Array.isArray(metadata.shotTasks) || metadata.shotTasks.length === 0) {
       const project = await readProject(slug);
       metadata.shotTasks = buildShotTasks(project.files);

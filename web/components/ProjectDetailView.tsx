@@ -5,6 +5,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AgentToolsPanel, type CoverSummary } from "./AgentToolsPanel";
 import { DocumentWorkspace } from "./DocumentWorkspace";
 import { ProjectSidebar } from "./ProjectSidebar";
+import { ShotExecutionWorkspace } from "./ShotExecutionWorkspace";
 import type { ResultFile } from "./ResultTabs";
 import { isPrimaryProjectDocument, isVisualPromptDocument } from "../../src/utils/documentDefinitions";
 import { readJsonResponse } from "../lib/readJsonResponse";
@@ -35,13 +36,10 @@ function detailProjectStatus(fileCount: number): string {
   return `已打开项目 · ${fileCount}/10 可用`;
 }
 
-function countCoreDocuments(files: ResultFile[]): number {
-  return files.filter((file) => isPrimaryProjectDocument(file.name) && !/_修改版/u.test(file.name)).length;
-}
-
 export function ProjectDetailView({ slug }: { slug: string }) {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [activeName, setActiveName] = useState("");
+  const [viewMode, setViewMode] = useState<"documents" | "execution">("documents");
   const [feedback, setFeedback] = useState("");
   const [assetPath, setAssetPath] = useState("");
   const [coverPrompt, setCoverPrompt] = useState("");
@@ -172,28 +170,52 @@ export function ProjectDetailView({ slug }: { slug: string }) {
   if (!project) return <main className="console-loading"><div className="product-alert alert-warning">{error || "项目不存在。"}</div><Link className="secondary-button" href="/projects">返回项目列表</Link></main>;
 
   return (
-    <main className="project-console">
-      <ProjectSidebar projectName={project.name} metadata={project.metadata} files={project.files} activeName={activeFile?.name || activeName} onSelect={(name) => { setActiveName(name); setError(""); setNotice(""); }} />
-      <DocumentWorkspace file={activeFile} error={error} notice={notice} onDownload={download} onCopy={copyCurrent} onDownloadAll={downloadAll} canRegenerate={project.metadata.status !== "complete"} regenerating={regenerating} onRegenerate={regenerateInvalidDocuments} />
-      <AgentToolsPanel
-        slug={slug}
-        isVisualPrompt={isVisualPrompt}
-        feedback={feedback}
-        assetPath={assetPath}
-        coverPrompt={coverPrompt}
-        coverRatio={coverRatio}
-        covers={project.covers || []}
-        refining={refining}
-        scanning={scanning}
-        generatingCover={generatingCover}
-        onFeedbackChange={setFeedback}
-        onAssetPathChange={setAssetPath}
-        onCoverPromptChange={setCoverPrompt}
-        onCoverRatioChange={setCoverRatio}
-        onRefine={refine}
-        onScan={scan}
-        onCreateCover={createCover}
+    <main className={`project-console ${viewMode === "execution" ? "mode-execution" : ""}`}>
+      <ProjectSidebar
+        projectName={project.name}
+        metadata={project.metadata}
+        files={project.files}
+        activeName={activeFile?.name || activeName}
+        onSelect={(name) => { setActiveName(name); setError(""); setNotice(""); }}
+        viewMode={viewMode}
+        onViewModeChange={setViewMode}
       />
+      {viewMode === "documents" ? (
+        <>
+          <DocumentWorkspace
+            file={activeFile}
+            error={error}
+            notice={notice}
+            onDownload={download}
+            onCopy={copyCurrent}
+            onDownloadAll={downloadAll}
+            canRegenerate={project.metadata.status !== "complete"}
+            regenerating={regenerating}
+            onRegenerate={regenerateInvalidDocuments}
+          />
+          <AgentToolsPanel
+            slug={slug}
+            isVisualPrompt={isVisualPrompt}
+            feedback={feedback}
+            assetPath={assetPath}
+            coverPrompt={coverPrompt}
+            coverRatio={coverRatio}
+            covers={project.covers || []}
+            refining={refining}
+            scanning={scanning}
+            generatingCover={generatingCover}
+            onFeedbackChange={setFeedback}
+            onAssetPathChange={setAssetPath}
+            onCoverPromptChange={setCoverPrompt}
+            onCoverRatioChange={setCoverRatio}
+            onRefine={refine}
+            onScan={scan}
+            onCreateCover={createCover}
+          />
+        </>
+      ) : (
+        <ShotExecutionWorkspace slug={slug} />
+      )}
     </main>
   );
 }
