@@ -36,10 +36,10 @@
 
 | 用途 | 命令 | 入口 |
 | --- | --- | --- |
-| Web 开发 | `npm run dev:web` | Next.js，默认 `http://localhost:3000` |
+| Web 开发 | `npm run dev` | Next.js，默认 `http://localhost:3000` |
 | Web 构建 | `npm run build:web` | `next build web --webpack` |
 | Web 生产运行 | `npm run web` | `next start web` |
-| CLI 开发入口 | `npm run dev -- --help` | `src/index.ts` |
+| CLI 开发入口 | `npm run dev:cli -- --help` | `src/index.ts` |
 | CLI 生成 | `npm run generate` | `src/index.ts generate` |
 | CLI 修改 | `npm run refine` | `src/index.ts refine` |
 | CLI 素材扫描 | `npm run scan` | `src/index.ts scan` |

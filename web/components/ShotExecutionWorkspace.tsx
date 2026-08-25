@@ -1,11 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, ArrowsClockwise, Camera, CheckCircle, FilmSlate, FlagCheckered, Scissors, WarningDiamond } from "@phosphor-icons/react";
 import type { ShotTask, ShotTaskStatus } from "../../src/types/shotTask";
+import type { MediaAsset } from "../../src/types/mediaAsset";
+import type { ShootingFeedback } from "../../src/types/shootingFeedback";
 import { readJsonResponse } from "../lib/readJsonResponse";
+import {
+  MissingShotsBar,
+  ShotAssetRow,
+  ShotMediaBar,
+  type EnrichedLink,
+} from "./ShotMediaAssets";
+import { EditingWorkbench } from "./EditingWorkbench";
+import { ShootingFeedbackPanel } from "./ShootingFeedbackPanel";
 
 interface ShotExecutionWorkspaceProps {
   slug: string;
+}
+
+interface BatchSuggestion {
+  startOrder: number;
+  endOrder: number;
+  linkIds: string[];
+  count: number;
 }
 
 const STATUS_LABELS: Record<ShotTaskStatus, string> = {
@@ -31,9 +49,18 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
+  // 镜头视图 / 剪辑准备工作台 视图切换
+  const [view, setView] = useState<"shots" | "editing">("shots");
 
   // 临时编辑状态
   const [editingNotes, setEditingNotes] = useState("");
+
+  // 素材相关状态
+  const [links, setLinks] = useState<EnrichedLink[]>([]);
+  const [allAssets, setAllAssets] = useState<MediaAsset[]>([]);
+  const [batchSuggestions, setBatchSuggestions] = useState<BatchSuggestion[]>([]);
+  const [filterMissing, setFilterMissing] = useState(false);
+  const [reshootShotIds, setReshootShotIds] = useState<Set<string>>(new Set());
 
   const loadShots = useCallback(async () => {
     try {
@@ -54,9 +81,40 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
     }
   }, [slug]);
 
+  const fetchLinks = useCallback(async () => {
+    try {
+      const [linksRes, assetsRes] = await Promise.all([
+        fetch(`/api/media/projects/${encodeURIComponent(slug)}/links`),
+        fetch("/api/media/assets"),
+      ]);
+      const linksData = await readJsonResponse<{ links?: EnrichedLink[]; batchSuggestions?: BatchSuggestion[]; error?: string }>(linksRes);
+      const assetsData = await readJsonResponse<{ assets?: MediaAsset[]; error?: string }>(assetsRes);
+      setLinks(linksData.links || []);
+      setBatchSuggestions(linksData.batchSuggestions || []);
+      setAllAssets(assetsData.assets || []);
+    } catch {
+      // 素材关系非阻塞
+    }
+  }, [slug]);
+
+  const fetchFeedbackState = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/feedback`, { cache: "no-store" });
+      const data = await readJsonResponse<{ feedback?: ShootingFeedback[] }>(response);
+      const latest = data.feedback?.[0];
+      setReshootShotIds(new Set((latest?.shotRecords || [])
+        .filter((record) => record.outcome === "reshoot")
+        .map((record) => record.shotTaskId || `order:${record.order}`)));
+    } catch {
+      setReshootShotIds(new Set());
+    }
+  }, [slug]);
+
   useEffect(() => {
     loadShots();
-  }, [loadShots]);
+    fetchLinks();
+    fetchFeedbackState();
+  }, [loadShots, fetchLinks, fetchFeedbackState]);
 
   const selectedTask = shotTasks.find((t) => t.id === selectedId) || shotTasks[0];
 
@@ -169,8 +227,16 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
   // 统计数据
   const totalCount = shotTasks.length;
   const doneCount = shotTasks.filter((t) => t.status === "done").length;
-  const readyCount = shotTasks.filter((t) => t.status === "ready" || t.status === "shot" || t.status === "done").length;
   const progressPct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+
+  // 素材统计：已确认主素材的镜头数 / 缺失镜头数
+  const confirmedShots = new Set(links.filter((l) => l.status === "confirmed").map((l) => l.shotTaskId));
+  const withAssetCount = shotTasks.filter((t) => confirmedShots.has(t.id)).length;
+  const missingAssetCount = totalCount - withAssetCount;
+  const reshootCount = shotTasks.filter((task) => reshootShotIds.has(task.id) || reshootShotIds.has(`order:${task.order}`)).length;
+  const visibleShotTasks = filterMissing
+    ? shotTasks.filter((t) => !confirmedShots.has(t.id))
+    : shotTasks;
 
   if (loading) {
     return (
@@ -189,6 +255,11 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
     <div className="shot-workspace">
       {/* 顶部指标与控制栏 */}
       <header className="shot-topbar">
+        <div className="shot-topbar-title">
+          <span>PRODUCTION BOARD</span>
+          <h2><FilmSlate size={23} weight="fill" /> 镜头执行</h2>
+          <p>从分镜到素材确认，按镜头推进拍摄进度。</p>
+        </div>
         <div className="shot-metrics">
           <div className="metric-chip">
             <small>镜头总数</small>
@@ -207,11 +278,20 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
           </div>
           <div className="metric-chip sub">
             <small>素材就绪</small>
-            <span>{readyCount} / {totalCount} 镜头</span>
+            <span>{withAssetCount} / {totalCount} 镜头{reshootCount ? ` · ${reshootCount} 需补拍` : ""}</span>
           </div>
         </div>
 
         <div className="shot-topbar-actions">
+          <button
+            type="button"
+            className={view === "editing" ? "primary-button" : "secondary-button"}
+            onClick={() => setView((v) => (v === "editing" ? "shots" : "editing"))}
+            title="进入剪辑准备工作台：素材整理 / Proxy / 路径管理（不做剪辑）"
+          >
+            {view === "editing" ? <ArrowLeft size={16} weight="bold" /> : <Scissors size={16} weight="bold" />}
+            <span>{view === "editing" ? "返回镜头" : "准备剪辑"}</span>
+          </button>
           <button
             type="button"
             className="secondary-button"
@@ -219,10 +299,32 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
             onClick={handleRebuild}
             title="从当前 Markdown 文档重新解析镜头任务（不修改 Markdown 文档）"
           >
-            {rebuilding ? <span className="spinner dark" /> : <span>↻ 重新构建镜头任务</span>}
+            {rebuilding ? <span className="spinner dark" /> : <><ArrowsClockwise size={16} weight="bold" /><span>重新构建</span></>}
           </button>
         </div>
       </header>
+
+      {view === "editing" ? (
+        <EditingWorkbench slug={slug} onBack={() => setView("shots")} />
+      ) : (
+        <>
+      {/* 素材控制栏：扫描 / 归项目 / 匹配镜头 / 批量确认 / 剪辑清单 */}
+      <ShotMediaBar
+        slug={slug}
+        batchSuggestions={batchSuggestions}
+        onLinksRefresh={fetchLinks}
+      />
+
+      {/* 缺镜头统计 */}
+      {totalCount > 0 && (
+        <MissingShotsBar
+          total={totalCount}
+          withAsset={withAssetCount}
+          missingCount={missingAssetCount}
+          filterMissing={filterMissing}
+          onToggleFilter={() => setFilterMissing((v) => !v)}
+        />
+      )}
 
       {error && (
         <div className="product-alert alert-warning">
@@ -256,12 +358,18 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
           {/* 左侧：紧凑镜头列表 */}
           <div className={`shot-list-panel ${mobileDetailOpen ? "mobile-hidden" : ""}`}>
             <div className="shot-list-header">
-              <span>镜头顺序列表 ({totalCount})</span>
+              <span>镜头顺序列表 ({visibleShotTasks.length}{filterMissing ? ` 缺失` : ""})</span>
             </div>
 
             <div className="shot-compact-list">
-              {shotTasks.map((t) => {
+              {visibleShotTasks.length === 0 && filterMissing ? (
+                <div className="shot-list-empty-hint">所有镜头都已有素材</div>
+              ) : null}
+              {visibleShotTasks.map((t) => {
                 const isActive = t.id === selectedId;
+                const hasAsset = confirmedShots.has(t.id);
+                const hasCandidate = links.some((l) => l.shotTaskId === t.id && l.status === "suggested");
+                const needsReshoot = reshootShotIds.has(t.id) || reshootShotIds.has(`order:${t.order}`);
                 return (
                   <button
                     key={t.id}
@@ -280,6 +388,10 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
                         <i />
                         {STATUS_LABELS[t.status]}
                       </span>
+                      {needsReshoot && <span className="status-badge status-warning"><WarningDiamond size={11} weight="fill" /> 需补拍</span>}
+                      {hasAsset && <span className="shot-asset-dot has" title="已有素材">●</span>}
+                      {!hasAsset && hasCandidate && <span className="shot-asset-dot candidate" title="有候选素材">●</span>}
+                      {!hasAsset && !hasCandidate && <span className="shot-asset-dot missing" title="缺素材">○</span>}
                     </div>
 
                     <div className="shot-item-narration">
@@ -341,13 +453,13 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
                 <div className="shot-quick-actions">
                   <span className="actions-label">快捷标记：</span>
                   <button type="button" className="action-pill ready-pill" onClick={markAssetsReady}>
-                    ✓ 标记素材已齐
+                    <CheckCircle size={14} weight="fill" /> 标记素材已齐
                   </button>
                   <button type="button" className="action-pill shot-pill" onClick={markShot}>
-                    📷 标记已拍摄
+                    <Camera size={14} weight="fill" /> 标记已拍摄
                   </button>
                   <button type="button" className="action-pill done-pill" onClick={markDone}>
-                    🎉 标记已完成
+                    <FlagCheckered size={14} weight="fill" /> 标记已完成
                   </button>
                 </div>
 
@@ -433,6 +545,16 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
                   </div>
                 </div>
 
+                {/* 匹配的真实素材文件（Finder / 预览 / 确认 / 更换） */}
+                <ShotAssetRow
+                  slug={slug}
+                  shotTaskId={selectedTask.id}
+                  shotOrder={selectedTask.order}
+                  links={links}
+                  allAssets={allAssets}
+                  onRefresh={fetchLinks}
+                />
+
                 {/* AI 提示词区 */}
                 {selectedTask.aiPrompt ? (
                   <div className="shot-section">
@@ -473,6 +595,9 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
             )}
           </div>
         </div>
+      )}
+      <ShootingFeedbackPanel slug={slug} shotTasks={shotTasks} onChanged={() => { void fetchFeedbackState(); void loadShots(); }} />
+        </>
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import { accessSync } from "node:fs";
-import { access, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { sanitizeFilename } from "../utils/sanitizeFilename.js";
 import { ensureOutputDir, getDefaultOutputDir, getOutputDirSync } from "./workspaceConfig.js";
@@ -9,7 +9,20 @@ export interface ProjectInfo {
   path: string;
 }
 
-const TRASH_DIR = path.resolve(process.cwd(), ".piance", "trash");
+const TRASH_MARKER = ".preframe-trash.json";
+
+function trashDir(): string {
+  const root = process.env.PIANCE_DATA_DIR?.trim() ? path.resolve(process.env.PIANCE_DATA_DIR) : path.resolve(process.cwd(), ".piance");
+  return path.join(root, "trash");
+}
+
+export interface TrashProjectInfo {
+  id: string;
+  originalSlug: string;
+  name: string;
+  deletedAt: string;
+  sizeBytes: number;
+}
 
 function uniqueProjectRoots(): string[] {
   const primary = getOutputDirSync();
@@ -146,19 +159,102 @@ export async function moveProjectToTrash(slug: string): Promise<{ trashPath: str
   }
   if (!projectStat.isDirectory()) throw new Error("项目目录无效。");
 
-  await mkdir(TRASH_DIR, { recursive: true });
+  const trashRoot = trashDir();
+  await mkdir(trashRoot, { recursive: true });
   const projectName = path.basename(projectDir);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  let trashPath = path.join(TRASH_DIR, `${projectName}_${timestamp}`);
+  let trashPath = path.join(trashRoot, `${projectName}_${timestamp}`);
   let suffix = 2;
   while (await exists(trashPath)) {
-    trashPath = path.join(TRASH_DIR, `${projectName}_${timestamp}_${suffix++}`);
+    trashPath = path.join(trashRoot, `${projectName}_${timestamp}_${suffix++}`);
   }
 
   try {
     await rename(projectDir, trashPath);
+    await writeFile(path.join(trashPath, TRASH_MARKER), `${JSON.stringify({ originalSlug: projectName, deletedAt: new Date().toISOString() }, null, 2)}\n`, "utf8").catch(() => undefined);
     return { trashPath };
   } catch (error) {
     throw new Error("项目移动到回收站失败，请检查目录权限后重试。", { cause: error });
   }
+}
+
+function validateTrashId(id: string): string {
+  if (!id || id !== path.basename(id) || id === "." || id === "..") throw new Error("回收站项目标识无效。");
+  return id;
+}
+
+function legacyOriginalSlug(id: string): string {
+  return id.replace(/_\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z(?:_\d+)?$/u, "") || id;
+}
+
+async function readTrashMetadata(directory: string, id: string): Promise<{ originalSlug: string; deletedAt: string; name: string }> {
+  let originalSlug = legacyOriginalSlug(id);
+  let deletedAt = (await stat(directory)).mtime.toISOString();
+  try {
+    const marker = JSON.parse(await readFile(path.join(directory, TRASH_MARKER), "utf8")) as Record<string, unknown>;
+    if (typeof marker.originalSlug === "string" && marker.originalSlug.trim()) originalSlug = marker.originalSlug;
+    if (typeof marker.deletedAt === "string" && marker.deletedAt.trim()) deletedAt = marker.deletedAt;
+  } catch { /* legacy trash entries do not have a marker */ }
+  let name = originalSlug;
+  try {
+    const metadata = JSON.parse(await readFile(path.join(directory, "project.json"), "utf8")) as Record<string, unknown>;
+    if (typeof metadata.projectName === "string" && metadata.projectName.trim()) name = metadata.projectName;
+    else if (typeof metadata.topic === "string" && metadata.topic.trim()) name = metadata.topic;
+  } catch { /* keep directory-derived name */ }
+  return { originalSlug, deletedAt, name };
+}
+
+export async function listTrashProjects(): Promise<TrashProjectInfo[]> {
+  let entries;
+  const trashRoot = trashDir();
+  try { entries = await readdir(trashRoot, { withFileTypes: true }); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+  const projects = await Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
+    const directory = path.join(trashRoot, entry.name);
+    const metadata = await readTrashMetadata(directory, entry.name);
+    return {
+      id: entry.name,
+      ...metadata,
+      sizeBytes: await calculateTrashSize(directory),
+    };
+  }));
+  return projects.sort((a, b) => Date.parse(b.deletedAt) - Date.parse(a.deletedAt));
+}
+
+async function calculateTrashSize(directory: string): Promise<number> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const sizes = await Promise.all(entries.map(async (entry) => {
+    const target = path.join(directory, entry.name);
+    if (entry.isSymbolicLink()) return 0;
+    if (entry.isDirectory()) return calculateTrashSize(target);
+    return entry.isFile() ? (await stat(target)).size : 0;
+  }));
+  return sizes.reduce((sum, size) => sum + size, 0);
+}
+
+export async function restoreProjectFromTrash(id: string): Promise<{ slug: string }> {
+  const safeId = validateTrashId(id);
+  const source = path.join(trashDir(), safeId);
+  let sourceStat;
+  try { sourceStat = await stat(source); } catch (error) {
+    const notFound = new Error(`回收站项目不存在：${safeId}`, { cause: error });
+    notFound.name = "ProjectNotFoundError";
+    throw notFound;
+  }
+  if (!sourceStat.isDirectory()) throw new Error("回收站项目目录无效。");
+  const metadata = await readTrashMetadata(source, safeId);
+  const outputDir = await ensureOutputDir();
+  const baseName = sanitizeFilename(metadata.originalSlug, "restored-project");
+  let slug = baseName;
+  let destination = path.join(outputDir, slug);
+  let suffix = 2;
+  while (await exists(destination)) {
+    slug = `${baseName}_${suffix++}`;
+    destination = path.join(outputDir, slug);
+  }
+  await rename(source, destination);
+  await rm(path.join(destination, TRASH_MARKER), { force: true });
+  return { slug };
 }

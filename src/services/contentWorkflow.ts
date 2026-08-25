@@ -1,25 +1,9 @@
 import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
-import {
-  buildGeneratePrompt,
-  buildGenerateRepairPrompt,
-  fallbackCoreMarkdown,
-  type GeneratedContent,
-  hasCompleteExecutionPackage,
-  type GenerateInput,
-  parseGeneratedContent,
-} from "../prompts/generatePrompt.js";
-import {
-  buildEnhancePrompt,
-  buildFallbackExecutionPackage,
-  executionContext,
-  executionDocumentInstructions,
-  ENHANCED_EXECUTION_FILES,
-  type EnhancedExecutionPackage,
-  parseEnhancedExecutionPackage,
-} from "../prompts/enhancePrompt.js";
-import { CORE_PROJECT_DOCUMENT_DEFINITIONS, EXECUTION_DOCUMENT_DEFINITIONS, PROJECT_DOCUMENT_DEFINITIONS } from "../utils/documentDefinitions.js";
+import type { GenerateInput } from "../prompts/generatePrompt.js";
+import { executionContext, executionDocumentInstructions } from "../prompts/enhancePrompt.js";
+import { CORE_PROJECT_DOCUMENT_DEFINITIONS, PROJECT_DOCUMENT_DEFINITIONS } from "../utils/documentDefinitions.js";
 import {
   buildRefinePrompt,
   buildRefineRepairPrompt,
@@ -39,7 +23,6 @@ import {
   type AccountMemorySnapshot,
 } from "./accountMemory.js";
 import {
-  createProjectDirectory,
   createTempProjectDirectory,
   finalizeTempProjectDirectory,
   removeTempProjectDirectory,
@@ -58,6 +41,8 @@ import {
   type DocumentStatusRecord,
   type GeneratedDocumentResult,
 } from "./documentGeneration.js";
+import { syncProjectDerivedState } from "./projectLifecycle.js";
+import { archiveDocumentVersion } from "./documentVersionStore.js";
 
 export interface ContentFile {
   name: string;
@@ -78,6 +63,7 @@ export type GenerationJobStatus =
   | "generatingExecution"
   | "generatingPublishCopy"
   | "writing"
+  | "paused"
   | "completed"
   | "cancelled"
   | "failed";
@@ -108,6 +94,7 @@ export interface GenerateProjectOptions {
   onStatus?: (update: GenerationStatusUpdate) => void;
   onTempDir?: (tempDir: string) => void;
   isCancelled?: () => boolean;
+  waitIfPaused?: () => Promise<void>;
   onTiming?: (label: string, durationMs: number) => void;
 }
 
@@ -176,22 +163,6 @@ async function withStage<T>(stage: GenerationFailureStage, task: () => Promise<T
   }
 }
 
-function parseWithStage<T>(task: () => T): T {
-  try {
-    return task();
-  } catch (error) {
-    if (error instanceof GenerationStageError || error instanceof GenerationCancelledError) throw error;
-    const message = error instanceof Error ? error.message : String(error);
-    throw new GenerationStageError("parse", message, { cause: error });
-  }
-}
-
-function recordTiming(jobId: string, label: string, started: number, options: GenerateProjectOptions): void {
-  const durationMs = Math.round(performance.now() - started);
-  console.info(`[generation:${jobId}] ${label}: ${durationMs}ms`);
-  options.onTiming?.(label, durationMs);
-}
-
 function projectMetadata(
   input: GenerateInput,
   projectName: string,
@@ -231,233 +202,11 @@ function documentProgress(overrides: Partial<Record<string, { status: Generation
   });
 }
 
-function progressWithCore(status: GenerationDocumentProgressStatus, message?: string): GenerationDocumentProgress[] {
-  return documentProgress(Object.fromEntries(CORE_PROJECT_DOCUMENT_DEFINITIONS.map((definition) => [
-    definition.filename,
-    { status, message },
-  ])));
-}
-
-function progressAfterCore(overrides: Partial<Record<string, { status: GenerationDocumentProgressStatus; message?: string }>> = {}): GenerationDocumentProgress[] {
-  const coreCompleted = Object.fromEntries(CORE_PROJECT_DOCUMENT_DEFINITIONS.map((definition) => [
-    definition.filename,
-    { status: "completed" as const },
-  ]));
-  return documentProgress({ ...coreCompleted, ...overrides });
-}
-
 function progressWithAll(status: GenerationDocumentProgressStatus, message?: string): GenerationDocumentProgress[] {
   return documentProgress(Object.fromEntries(PROJECT_DOCUMENT_DEFINITIONS.map((definition) => [
     definition.filename,
     { status, message },
   ])));
-}
-
-function documentsFromGeneratedContent(content: GeneratedContent): ContentFile[] {
-  return CORE_PROJECT_DOCUMENT_DEFINITIONS.map(({ key, filename }) => ({
-    name: filename,
-    content: content[key],
-  }));
-}
-
-function selectedExecutionContextDocuments(content: GeneratedContent): ContentFile[] {
-  const selected = new Set(["01_项目概览.md", "03_口播脚本.md", "04_分镜与剪辑节奏.md", "06_封面标题与发布文案.md", "08_内容质检报告.md"]);
-  return documentsFromGeneratedContent(content).filter((document) => selected.has(document.name));
-}
-
-interface CoreContentResult {
-  content: GeneratedContent;
-  fallbackKeys: Set<string>;
-}
-
-function fallbackCoreContent(): GeneratedContent {
-  return Object.fromEntries(CORE_PROJECT_DOCUMENT_DEFINITIONS.map(({ key }) => [
-    key,
-    fallbackCoreMarkdown(key),
-  ])) as GeneratedContent;
-}
-
-function fallbackKeysFromContent(content: GeneratedContent): Set<string> {
-  return new Set(CORE_PROJECT_DOCUMENT_DEFINITIONS
-    .filter(({ key }) => content[key].includes("模型未完整返回"))
-    .map(({ key }) => key));
-}
-
-function safeOutputPreview(raw: string): string {
-  return raw
-    .slice(0, 300)
-    .replace(/(?:sk-|sess-|xox[baprs]-)[A-Za-z0-9_-]+/giu, "[REDACTED]")
-    .replace(/\s+/gu, " ")
-    .trim();
-}
-
-interface ExecutionPackageResult {
-  executionPackage: EnhancedExecutionPackage;
-  usedFallback: boolean;
-}
-
-async function parseCoreContent(raw: string, jobId: string, options: GenerateProjectOptions, accountMemoryPrompt?: string): Promise<CoreContentResult> {
-  const parseStarted = performance.now();
-  try {
-    const content = parseWithStage(() => parseGeneratedContent(raw));
-    recordTiming(jobId, "解析耗时", parseStarted, options);
-    return { content, fallbackKeys: new Set() };
-  } catch (error) {
-    if (error instanceof GenerationStageError && error.stage !== "parse") throw error;
-    recordTiming(jobId, "解析耗时", parseStarted, options);
-    assertNotCancelled(options);
-    const reason = error instanceof Error ? error.message : "输出格式无效";
-    console.warn(`[generation:${jobId}] parse failed: ${safeOutputPreview(raw)}`);
-    options.onStatus?.({
-      status: "generatingCore",
-      currentDocument: "01-08 核心文档修复中",
-      progress: 0,
-      message: "模型输出结构需要自动修复。",
-      generationProgress: progressWithCore("repairing", "修复 JSON 结构"),
-    });
-    const repairPromptStarted = performance.now();
-    const repairPrompt = buildGenerateRepairPrompt(raw, reason, accountMemoryPrompt);
-    recordTiming(jobId, "自动修复 prompt 构造耗时", repairPromptStarted, options);
-    console.info(`[generation:${jobId}] repair used`);
-    const repairedRaw = await withStage("model", () => timed(jobId, "自动修复耗时", options, () => callModel(repairPrompt, { signal: options.signal })));
-    assertNotCancelled(options);
-    const repairParseStarted = performance.now();
-    try {
-      const repaired = parseGeneratedContent(repairedRaw, { allowDocumentFallback: true });
-      const fallbackKeys = fallbackKeysFromContent(repaired);
-      recordTiming(jobId, "自动修复解析耗时", repairParseStarted, options);
-      if (fallbackKeys.size) console.warn(`[generation:${jobId}] fallback used: ${fallbackKeys.size}/8 core documents`);
-      return { content: repaired, fallbackKeys };
-    } catch {
-      recordTiming(jobId, "自动修复解析耗时", repairParseStarted, options);
-      console.warn(`[generation:${jobId}] parse failed: ${safeOutputPreview(repairedRaw)}`);
-      console.warn(`[generation:${jobId}] fallback used: 8/8 core documents`);
-      return {
-        content: fallbackCoreContent(),
-        fallbackKeys: new Set(CORE_PROJECT_DOCUMENT_DEFINITIONS.map(({ key }) => key)),
-      };
-    }
-  }
-}
-
-async function generateExecutionPackage(
-  input: GenerateInput,
-  projectName: string,
-  content: GeneratedContent,
-  options: GenerateProjectOptions,
-  accountMemoryPrompt?: string,
-  accountMemory?: { used: boolean; snapshot: AccountMemorySnapshot },
-): Promise<ExecutionPackageResult> {
-  if (hasCompleteExecutionPackage(content)) {
-    return {
-      executionPackage: {
-        finalExecutionScript: content.finalExecutionScript,
-        postEngagementCopy: content.postEngagementCopy,
-      },
-      usedFallback: false,
-    };
-  }
-
-  const jobId = options.jobId || "local";
-  const model = await loadModelConfig().then((config) => config.model).catch(() => undefined);
-  const metadata = projectMetadata(input, projectName, undefined, model, accountMemory);
-  const documents = selectedExecutionContextDocuments(content);
-  const promptStarted = performance.now();
-  const prompt = buildEnhancePrompt({ projectName, metadata, documents, accountMemoryPrompt });
-  recordTiming(jobId, "09/10 prompt 构造耗时", promptStarted, options);
-
-  try {
-    options.onStatus?.({
-      status: "generatingExecution",
-      currentDocument: "09_成片执行稿.md",
-      progress: 80,
-      generationProgress: progressAfterCore({
-        "09_成片执行稿.md": { status: "generating" },
-      }),
-    });
-    const raw = await timed(jobId, "09/10 模型请求耗时", options, () => callModel(prompt, { signal: options.signal }));
-    assertNotCancelled(options);
-    options.onStatus?.({
-      status: "generatingPublishCopy",
-      currentDocument: "10_发布承接话术.md",
-      progress: 90,
-      generationProgress: progressAfterCore({
-        "09_成片执行稿.md": { status: "completed" },
-        "10_发布承接话术.md": { status: "generating" },
-      }),
-    });
-    const parseStarted = performance.now();
-    const enhanced = parseEnhancedExecutionPackage(raw);
-    recordTiming(jobId, "09/10 解析耗时", parseStarted, options);
-    options.onStatus?.({
-      status: "generatingPublishCopy",
-      currentDocument: "10_发布承接话术.md",
-      progress: 100,
-      generationProgress: progressAfterCore({
-        "09_成片执行稿.md": { status: "completed" },
-        "10_发布承接话术.md": { status: "completed" },
-      }),
-    });
-    return { executionPackage: enhanced, usedFallback: false };
-  } catch (error) {
-    assertNotCancelled(options);
-    const detail = error instanceof Error ? error.message : "未知错误";
-    console.warn(`[generation:${jobId}] fallback used: 09/10 (${detail.slice(0, 300)})`);
-    options.onStatus?.({
-      status: "generatingPublishCopy",
-      currentDocument: "09/10 备用模板",
-      progress: 100,
-      message: "09/10 生成不完整，已写入备用模板。",
-      generationProgress: progressAfterCore({
-        "09_成片执行稿.md": { status: "failed", message: "生成失败" },
-        "10_发布承接话术.md": { status: "failed", message: "生成失败" },
-      }),
-    });
-    return { executionPackage: buildFallbackExecutionPackage(), usedFallback: true };
-  }
-}
-
-async function writeCompleteProject(
-  tempDir: string,
-  input: GenerateInput,
-  projectName: string,
-  coreContent: GeneratedContent,
-  executionPackage: EnhancedExecutionPackage,
-  generationStartedAt: string,
-  model?: string,
-  accountMemory?: { used: boolean; snapshot: AccountMemorySnapshot },
-  coreFallbackKeys: Set<string> = new Set(),
-  executionFallbackUsed = false,
-): Promise<ContentFile[]> {
-  const files: ContentFile[] = [];
-  for (const { key, filename: name } of CORE_PROJECT_DOCUMENT_DEFINITIONS) {
-    const content = coreContent[key];
-    await writeMarkdown(path.join(tempDir, name), content);
-    files.push({ name, content, ...(coreFallbackKeys.has(key) ? { fallbackUsed: true } : {}) });
-  }
-  for (const { key, filename: name } of EXECUTION_DOCUMENT_DEFINITIONS) {
-    const content = executionPackage[key];
-    await writeMarkdown(path.join(tempDir, name), content);
-    files.push({ name, content, ...(executionFallbackUsed ? { fallbackUsed: true } : {}) });
-  }
-  const generationFinishedAt = new Date().toISOString();
-  const startedMs = Date.parse(generationStartedAt);
-  const finishedMs = Date.parse(generationFinishedAt);
-  const generationDurationMs = Number.isFinite(startedMs) && Number.isFinite(finishedMs)
-    ? Math.max(0, finishedMs - startedMs)
-    : 0;
-  await writeJson(path.join(tempDir, "project.json"), {
-    ...projectMetadata(input, projectName, {
-    startedAt: generationStartedAt,
-    finishedAt: generationFinishedAt,
-    durationMs: generationDurationMs,
-    }, model, accountMemory),
-    fallbackUsed: coreFallbackKeys.size > 0 || executionFallbackUsed,
-    fallbackDocuments: files
-      .filter((file) => file.fallbackUsed)
-      .map((file) => ({ name: file.name, fallbackUsed: true })),
-  });
-  return files;
 }
 
 /** CLI 与 Web 共用的完整生成流程。 */
@@ -501,6 +250,7 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
       });
     };
     const generateDefinition = async (definition: (typeof PROJECT_DOCUMENT_DEFINITIONS)[number], context = "") => {
+      await options.waitIfPaused?.();
       assertNotCancelled(options);
       const accepted = [...results.values()].filter((result) => result.content).map((result) => ({ name: result.definition.filename, content: result.content as string }));
       const result = await generateValidatedDocument({
@@ -578,6 +328,7 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
     const projectDir = await withStage("write", () => finalizeTempProjectDirectory(tempDir, projectName));
     finalized = true;
     const projectSlug = path.basename(projectDir);
+    await syncProjectDerivedState(projectSlug);
     if (files.length < PROJECT_DOCUMENT_DEFINITIONS.length) {
       const failedCount = PROJECT_DOCUMENT_DEFINITIONS.length - files.length;
       throw new PartialGenerationError(`${files.length}/10 可用，${failedCount} 份生成失败。`, { projectSlug, projectName, files, failedStage: "document-validation" });
@@ -670,7 +421,9 @@ export async function regenerateProjectDocuments(projectSlug: string, requestedN
   }
 
   const requested = new Set(requestedNumbers.map((number) => number.padStart(2, "0")));
-  const targets = new Set(requested.size ? [...requested].filter((number) => invalid.has(number)) : invalid.keys());
+  const targets = new Set(requested.size
+    ? [...requested].filter((number) => PROJECT_DOCUMENT_DEFINITIONS.some((definition) => definition.number === number))
+    : invalid.keys());
   const dependencyMap: Record<string, string[]> = {
     "09": ["01", "03", "04", "05", "08"],
     "10": ["01", "03", "06", "08", "09"],
@@ -705,8 +458,14 @@ export async function regenerateProjectDocuments(projectSlug: string, requestedN
     const definition = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === number);
     if (!definition) continue;
     const result = regenerated.get(number);
-    if (result?.content) await writeMarkdown(path.join(projectDir, definition.filename), result.content);
-    else await rm(path.join(projectDir, definition.filename), { force: true });
+    const previousContent = allContents.get(definition.filename);
+    if (previousContent) await archiveDocumentVersion(projectSlug, definition.filename, previousContent, "regenerate");
+    if (result?.content) {
+      await writeMarkdown(path.join(projectDir, definition.filename), result.content);
+    } else {
+      existing.delete(definition.filename);
+      await rm(path.join(projectDir, definition.filename), { force: true });
+    }
   }
 
   const records: DocumentStatusRecord[] = PROJECT_DOCUMENT_DEFINITIONS.map((definition) => {
@@ -744,6 +503,7 @@ export async function regenerateProjectDocuments(projectSlug: string, requestedN
     fallbackDocuments: records.filter((record) => record.documentStatus === "fallback").map((record) => record.id),
     regeneratedAt: new Date().toISOString(),
   });
+  await syncProjectDerivedState(projectSlug);
   return {
     files: [...existing.entries()].map(([name, content]) => ({ name, content })).sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true })),
     status,
@@ -803,6 +563,8 @@ export async function refineProjectFile(
     refined = parseRefinedContent(repairedRaw, [filename]);
   }
   const outputName = await availableRevisedFilename(projectDir, filename);
+  await archiveDocumentVersion(projectSlug, filename, content, "refine-source");
+  await archiveDocumentVersion(projectSlug, filename, refined[filename], "refine-result");
   await writeMarkdown(path.join(projectDir, outputName), refined[filename]);
   return { name: outputName, content: refined[filename] };
 }

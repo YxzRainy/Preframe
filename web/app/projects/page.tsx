@@ -6,9 +6,9 @@ export default function ProjectsPage() {
     <main className="page-shell project-library-shell">
       <div className="page-title">
         <div>
-          <p className="eyebrow">内容项目库</p>
-          <h1>内容项目控制台</h1>
-          <p>管理已完成的内容项目，继续修改文档、扫描素材或导出 Markdown。</p>
+          <p className="eyebrow">项目库</p>
+          <h1>项目库</h1>
+          <p>管理所有内容项目，继续修改文档、扫描素材或导出 Markdown。</p>
         </div>
         <div className="library-actions"><StatusBadge tone="ready">本地存储正常</StatusBadge></div>
       </div>

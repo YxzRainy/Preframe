@@ -13,6 +13,7 @@ import { resolveContentProfile } from "../../../../src/utils/contentProfile";
 import { removeTempProjectDirectory } from "../../../../src/services/projectManager";
 import { PROJECT_DOCUMENT_DEFINITIONS } from "../../../../src/utils/documentDefinitions";
 import { formatDuration } from "../../../../src/utils/generationTiming";
+import { markIdeaConverted } from "../../../../src/services/ideaManager";
 import { consumeFreeTrial, getTrialStatus } from "../../../lib/supabase/trial";
 import { readRequestJson } from "../_utils";
 
@@ -25,6 +26,9 @@ interface GenerationJobSnapshot {
   progress: number;
   message: string;
   cancelled: boolean;
+  pauseRequested: boolean;
+  resumeStatus?: GenerationJobStatus;
+  resumeWaiters: Array<() => void>;
   tempDir?: string;
   abortController: AbortController;
   timings: Array<{ label: string; durationMs: number }>;
@@ -63,6 +67,10 @@ function required(value: unknown, label: string): string {
   return value.trim();
 }
 
+function optional(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
 function jobIdFrom(value: unknown): string {
   return typeof value === "string" && /^[a-zA-Z0-9_-]{8,120}$/u.test(value) ? value : crypto.randomUUID();
 }
@@ -78,6 +86,8 @@ function createJob(jobId: string): GenerationJobSnapshot {
     progress: 5,
     message: "",
     cancelled: false,
+    pauseRequested: false,
+    resumeWaiters: [],
     abortController: new AbortController(),
     timings: [],
     generationProgress: initialGenerationProgress(),
@@ -89,7 +99,14 @@ function createJob(jobId: string): GenerationJobSnapshot {
 }
 
 function updateJob(job: GenerationJobSnapshot, update: GenerationStatusUpdate): void {
-  job.status = update.status;
+  if (update.status === "paused") {
+    job.status = "paused";
+  } else if (job.pauseRequested && update.status !== "failed" && update.status !== "cancelled" && update.status !== "completed") {
+    job.resumeStatus = update.status;
+    job.status = "paused";
+  } else {
+    job.status = update.status;
+  }
   if (update.currentDocument !== undefined) job.currentDocument = update.currentDocument;
   if (update.progress !== undefined) job.progress = update.progress;
   if (update.message !== undefined) job.message = update.message;
@@ -127,7 +144,20 @@ function publicJob(job: GenerationJobSnapshot) {
     durationMs: job.durationMs,
     durationLabel: job.durationLabel,
     updatedAt: job.updatedAt,
+    canPause: !["idle", "completed", "cancelled", "failed"].includes(job.status),
+    canResume: job.status === "paused",
   };
+}
+
+function releasePausedJob(job: GenerationJobSnapshot): void {
+  const waiters = job.resumeWaiters.splice(0);
+  for (const resolve of waiters) resolve();
+}
+
+async function waitIfPaused(job: GenerationJobSnapshot): Promise<void> {
+  while (job.pauseRequested && !job.cancelled) {
+    await new Promise<void>((resolve) => job.resumeWaiters.push(resolve));
+  }
 }
 
 function jsonError(error: unknown, stage: ApiErrorStage, status = 400, job?: GenerationJobSnapshot) {
@@ -228,6 +258,8 @@ export async function DELETE(request: Request) {
     }
 
     job.cancelled = true;
+    job.pauseRequested = false;
+    releasePausedJob(job);
     job.abortController.abort();
     finishJob(job);
     updateJob(job, { status: "cancelled", currentDocument: "已撤销", progress: 0, message: "已撤销生成，本地临时文件已清理。" });
@@ -244,8 +276,37 @@ export async function DELETE(request: Request) {
   }
 }
 
+export async function PATCH(request: Request) {
+  try {
+    const body = await readRequestJson(request);
+    const jobId = typeof body.jobId === "string" ? body.jobId : "";
+    const action = body.action;
+    const job = jobs.get(jobId);
+    if (!job) return jsonError(new Error("生成任务不存在或服务已重启。"), "generate", 404);
+    if (["completed", "cancelled", "failed"].includes(job.status)) {
+      return jsonError(new Error("当前任务已经结束，无法修改状态。"), "generate", 409);
+    }
+    if (action === "pause") {
+      job.pauseRequested = true;
+      job.resumeStatus = job.status;
+      updateJob(job, { status: "paused", currentDocument: job.currentDocument, message: "当前请求完成后暂停，不会开始下一份文档。" });
+    } else if (action === "resume") {
+      job.pauseRequested = false;
+      const status = job.resumeStatus && job.resumeStatus !== "paused" ? job.resumeStatus : "generatingCore";
+      releasePausedJob(job);
+      updateJob(job, { status, currentDocument: job.currentDocument, message: "任务已恢复。" });
+    } else {
+      return jsonError(new Error("不支持的任务操作。"), "generate", 400);
+    }
+    return NextResponse.json({ ok: true, success: true, job: publicJob(job) });
+  } catch (error) {
+    return jsonError(error, "generate", 400);
+  }
+}
+
 export async function POST(request: Request) {
   let job: GenerationJobSnapshot | undefined;
+  let sourceIdeaId = "";
   try {
     const body = await readRequestJson(request);
     const jobId = jobIdFrom(body.jobId);
@@ -254,23 +315,25 @@ export async function POST(request: Request) {
     request.signal.addEventListener("abort", () => {
       if (!job) return;
       job.cancelled = true;
+      job.pauseRequested = false;
+      releasePausedJob(job);
       job.abortController.abort();
       finishJob(job);
       updateJob(job, { status: "cancelled", currentDocument: "已撤销", progress: 0, message: "已撤销生成，本地临时文件已清理。" });
     }, { once: true });
 
     const profile = resolveContentProfile(body);
-    const usesNewProfile = typeof body.contentSubject === "string" && body.contentSubject.trim().length > 0;
     const topic = required(body.topic, "选题主题");
     const projectName = typeof body.projectName === "string" && body.projectName.trim() ? body.projectName.trim() : topic;
+    sourceIdeaId = typeof body.ideaId === "string" ? body.ideaId.trim() : "";
     const input: GenerateInput = {
       projectName,
       topic,
-      platform: required(body.platform, "平台"),
-      contentSubject: required(profile.contentSubject, "内容主体"),
-      contentDomain: usesNewProfile ? required(profile.contentDomain, "内容领域") : profile.contentDomain || "未指定",
-      style: required(body.style, "内容风格"),
-      targetAudience: required(body.targetUser, "目标用户"),
+      platform: optional(body.platform, "小红书"),
+      contentSubject: profile.contentSubject || "内容创作者",
+      contentDomain: profile.contentDomain || "未指定",
+      style: optional(body.style, "专业但通俗"),
+      targetAudience: optional(body.targetUser, "对该选题感兴趣的人"),
       extraRequirements: typeof body.extra === "string" ? body.extra.trim() : "",
     };
     await authorizeGeneration(request);
@@ -279,6 +342,7 @@ export async function POST(request: Request) {
       generationStartedAt: job.startedAt,
       signal: job.abortController.signal,
       isCancelled: () => Boolean(job?.cancelled),
+      waitIfPaused: () => job ? waitIfPaused(job) : Promise.resolve(),
       onTempDir: (tempDir) => {
         if (job) job.tempDir = tempDir;
       },
@@ -290,6 +354,13 @@ export async function POST(request: Request) {
       },
     });
     if (job.cancelled) throw new GenerationCancelledError();
+    if (sourceIdeaId) {
+      try {
+        await markIdeaConverted(sourceIdeaId, result.projectSlug);
+      } catch (markError) {
+        console.warn(`灵感转换状态写入失败：${markError instanceof Error ? markError.message : String(markError)}`);
+      }
+    }
     finishJob(job);
     updateJob(job, { status: "completed", currentDocument: "10 份文档", progress: 100 });
     return NextResponse.json({ ok: true, success: true, job: publicJob(job), ...result });
@@ -300,6 +371,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, success: false, cancelled: true, error: "已撤销生成，本地临时文件已清理。", stage: "generate", job: job ? publicJob(job) : undefined }, { status: 499 });
     }
     if (error instanceof PartialGenerationError) {
+      if (sourceIdeaId) {
+        try {
+          await markIdeaConverted(sourceIdeaId, error.projectSlug);
+        } catch (markError) {
+          console.warn(`灵感转换状态写入失败：${markError instanceof Error ? markError.message : String(markError)}`);
+        }
+      }
       if (job) finishJob(job);
       if (job) updateJob(job, { status: "failed", currentDocument: "部分文档生成失败", progress: Math.round((error.files.length / 10) * 100), message: error.message });
       return NextResponse.json({

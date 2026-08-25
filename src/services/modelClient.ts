@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { writeJsonAtomicPath } from "./atomicJson.js";
 
 export type ModelProvider =
   | "deepseek"
@@ -143,8 +144,24 @@ function normalizeConfig(value: Record<string, unknown>, existingApiKey = ""): M
 function validateConfig(config: ModelConfig): void {
   if (!config.baseURL) throw new ModelClientError("Base URL 不能为空。");
   if (!/^https?:\/\//u.test(config.baseURL)) throw new ModelClientError("Base URL 必须以 http:// 或 https:// 开头。");
+  let parsedUrl: URL;
+  try { parsedUrl = new URL(config.baseURL); } catch { throw new ModelClientError("Base URL 不是合法网址。"); }
+  if (parsedUrl.username || parsedUrl.password) throw new ModelClientError("Base URL 不能包含账号或密码。");
+  if (!parsedUrl.hostname) throw new ModelClientError("Base URL 缺少主机名。");
   if (!config.apiKey) throw new ModelClientError("API Key 不能为空。");
+  if (/^(?:your[-_ ]?api[-_ ]?key|sk-\.\.\.|__PREFRAME_REDACTED__)$/iu.test(config.apiKey)) throw new ModelClientError("API Key 仍是占位值，请填写真实密钥。");
   if (!config.model) throw new ModelClientError("模型名称不能为空。");
+}
+
+export function validateModelConfigInput(input: Record<string, unknown>, existingApiKey = ""): void {
+  if (!isProvider(input.provider)) throw new ModelClientError("模型服务商无效。");
+  if (typeof input.baseURL !== "string" || !input.baseURL.trim()) throw new ModelClientError("Base URL 不能为空。");
+  if (typeof input.model !== "string" || !input.model.trim()) throw new ModelClientError("模型名称不能为空。");
+  const temperature = typeof input.temperature === "number" ? input.temperature : Number(input.temperature);
+  const maxTokens = typeof input.maxTokens === "number" ? input.maxTokens : Number(input.maxTokens);
+  if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) throw new ModelClientError("Temperature 必须在 0 到 2 之间。");
+  if (!Number.isFinite(maxTokens) || maxTokens < 256 || maxTokens > 200000) throw new ModelClientError("Max Tokens 必须在 256 到 200000 之间。");
+  validateConfig(normalizeConfig(input, existingApiKey));
 }
 
 export function maskApiKey(apiKey: string): string {
@@ -198,10 +215,10 @@ export async function loadModelConfig(): Promise<ModelConfig & { source: "file" 
 
 export async function saveModelConfig(input: Record<string, unknown>): Promise<PublicModelConfig> {
   const existing = await readFileConfig().catch(() => null);
+  validateModelConfigInput(input, existing?.apiKey || "");
   const config = normalizeConfig(input, existing?.apiKey || "");
   validateConfig(config);
-  await mkdir(path.dirname(modelConfigPath()), { recursive: true });
-  await writeFile(modelConfigPath(), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  await writeJsonAtomicPath(modelConfigPath(), config);
   return publicModelConfig({ ...config, source: "file" }, true);
 }
 
@@ -341,9 +358,10 @@ export function createModelClient(config: ModelConfig) {
   validateConfig(config);
   return {
     callChatModel(prompt: string, options: CallModelOptions = {}) {
-      if (config.provider === "anthropic") return callAnthropic(config, prompt, options);
-      if (config.provider === "gemini") return callGemini(config, prompt, options);
-      return callOpenAICompatible(config, prompt, options);
+      const effectiveOptions = { ...options, signal: options.signal || AbortSignal.timeout(60_000) };
+      if (config.provider === "anthropic") return callAnthropic(config, prompt, effectiveOptions);
+      if (config.provider === "gemini") return callGemini(config, prompt, effectiveOptions);
+      return callOpenAICompatible(config, prompt, effectiveOptions);
     },
   };
 }
@@ -365,8 +383,10 @@ export async function callModel(prompt: string, options: CallModelOptions = {}):
 }
 
 export async function testModelConnection(configInput?: Record<string, unknown>): Promise<{ ok: true; message: string; config: PublicModelConfig }> {
+  const existing = (await readFileConfig().catch(() => null))?.apiKey || "";
+  if (configInput) validateModelConfigInput(configInput, existing);
   const config = configInput
-    ? { ...normalizeConfig(configInput, (await readFileConfig().catch(() => null))?.apiKey || ""), source: "file" as const }
+    ? { ...normalizeConfig(configInput, existing), source: "file" as const }
     : await loadModelConfig();
   validateConfig(config);
   try {

@@ -10,13 +10,14 @@ interface ModalProps {
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md" | "lg" | "xl";
   closeDisabled?: boolean;
+  className?: string;
 }
 
 const EXIT_MS = 220;
 
-export function Modal({ open, title, description, onClose, children, footer, size = "md", closeDisabled = false }: ModalProps) {
+export function Modal({ open, title, description, onClose, children, footer, size = "md", closeDisabled = false, className = "" }: ModalProps) {
   const titleId = useId();
   const descriptionId = useId();
   const [mounted, setMounted] = useState(open);
@@ -63,7 +64,7 @@ export function Modal({ open, title, description, onClose, children, footer, siz
     <div className={`modal-layer ${closing ? "closing" : "opening"}`} role="presentation">
       <button className="modal-overlay" type="button" aria-label="关闭弹窗" onClick={closeDisabled ? undefined : onClose} />
       <section
-        className={`modal-panel modal-${size}`}
+        className={`modal-panel modal-${size} ${className}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

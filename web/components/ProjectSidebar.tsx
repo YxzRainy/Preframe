@@ -1,22 +1,36 @@
 "use client";
 
+import Link from "next/link";
+import {
+  ArrowLeft,
+  CaretDown,
+  ChartDonut,
+  CheckCircle,
+  FileText,
+  PaperPlaneTilt,
+  VideoCamera,
+} from "@phosphor-icons/react";
 import type { ResultFile } from "./ResultTabs";
 import { StatusBadge } from "./StatusBadge";
 import { resolveContentProfile } from "../../src/utils/contentProfile";
 import { formatModelLabel } from "../../src/utils/modelLabel";
 import { displayDocumentName, isPrimaryProjectDocument, PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinitions";
 
+type ProjectViewMode = "documents" | "execution" | "overview";
+
 interface ProjectSidebarProps {
+  slug: string;
   projectName: string;
   metadata: Record<string, unknown>;
   files: ResultFile[];
   activeName: string;
   onSelect: (name: string) => void;
-  viewMode?: "documents" | "execution";
-  onViewModeChange?: (mode: "documents" | "execution") => void;
+  viewMode?: ProjectViewMode;
+  onViewModeChange?: (mode: ProjectViewMode) => void;
 }
 
 export function ProjectSidebar({
+  slug,
   projectName,
   metadata,
   files,
@@ -97,6 +111,10 @@ export function ProjectSidebar({
   return (
     <aside className="pipeline-sidebar">
       <div className="pipeline-sidebar-inner">
+        <Link className="project-sidebar-back" href="/projects">
+          <ArrowLeft size={15} weight="bold" />
+          返回项目库
+        </Link>
         <section className="project-identity-card">
           <div className="project-card-head">
             <span>当前项目</span>
@@ -105,16 +123,28 @@ export function ProjectSidebar({
             </StatusBadge>
           </div>
           <h1>{projectName}</h1>
-          <div className="project-meta-chips">
-            <div><small>主体</small><span>{contentSubject}</span></div>
-            <div><small>领域</small><span>{contentDomain}</span></div>
-            <div><small>平台</small><span>{String(metadata.platform || "未记录")}</span></div>
-            <div><small>风格</small><span>{String(metadata.style || "未记录")}</span></div>
-            <div><small>模型</small><span>{metadata.model ? formatModelLabel(String(metadata.model)) : "未记录"}</span></div>
-            {generationDurationLabel && <div><small>生成耗时</small><span>{generationDurationLabel}</span></div>}
-          </div>
+          <p className="project-identity-summary">{contentSubject} · {String(metadata.platform || "平台未记录")}</p>
           <div className="project-progress"><i style={{ width: progressWidth }} /></div>
           <div className="project-progress-copy"><span>核心策划文档</span><b>{completedCoreCount} / {totalCoreCount}</b></div>
+          <details className="project-meta-disclosure">
+            <summary>项目参数 <CaretDown size={13} weight="bold" /></summary>
+            <div className="project-meta-chips">
+              <div><small>主体</small><span>{contentSubject}</span></div>
+              <div><small>领域</small><span>{contentDomain}</span></div>
+              <div><small>平台</small><span>{String(metadata.platform || "未记录")}</span></div>
+              <div><small>风格</small><span>{String(metadata.style || "未记录")}</span></div>
+              <div><small>模型</small><span>{metadata.model ? formatModelLabel(String(metadata.model)) : "未记录"}</span></div>
+              {generationDurationLabel && <div><small>生成耗时</small><span>{generationDurationLabel}</span></div>}
+            </div>
+          </details>
+          <Link
+            className="secondary-button project-to-publish"
+            href={`/publish?new=1&project=${encodeURIComponent(slug)}`}
+            title="带入项目标题与发布文案，跳转到发布中心创建任务"
+          >
+            <PaperPlaneTilt size={16} weight="fill" />
+            添加到发布中心
+          </Link>
         </section>
 
         {/* 视图模式平级切换 */}
@@ -125,14 +155,24 @@ export function ProjectSidebar({
               className={viewMode === "documents" ? "switcher-btn active" : "switcher-btn"}
               onClick={() => onViewModeChange("documents")}
             >
-              📄 策划文档
+              <FileText size={17} weight={viewMode === "documents" ? "fill" : "regular"} />
+              <span>策划文档</span>
             </button>
             <button
               type="button"
               className={viewMode === "execution" ? "switcher-btn active" : "switcher-btn"}
               onClick={() => onViewModeChange("execution")}
             >
-              🎬 拍摄执行
+              <VideoCamera size={17} weight={viewMode === "execution" ? "fill" : "regular"} />
+              <span>拍摄执行</span>
+            </button>
+            <button
+              type="button"
+              className={viewMode === "overview" ? "switcher-btn active" : "switcher-btn"}
+              onClick={() => onViewModeChange("overview")}
+            >
+              <ChartDonut size={17} weight={viewMode === "overview" ? "fill" : "regular"} />
+              <span>阶段与发布</span>
             </button>
           </div>
         )}
@@ -157,7 +197,7 @@ export function ProjectSidebar({
         )}
         <div className="sidebar-bottom-actions">
           <div className="sidebar-footnote">
-            <span className="pulse-dot" />本地文件同步正常
+            <CheckCircle size={14} weight="fill" />本地文件同步正常
           </div>
         </div>
       </div>

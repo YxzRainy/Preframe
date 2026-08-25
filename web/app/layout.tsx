@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import "./globals.css";
 import { TopBar } from "../components/TopBar";
 import { AppSidebar } from "../components/AppSidebar";
+import { CreateProjectFlow } from "../components/CreateProjectFlow";
+import { getCreatorProfile } from "../../src/services/profileConfig";
+import { getWorkspaceStats } from "../../src/services/workspaceConfig";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "片策｜短视频前期策划工作台",
@@ -26,7 +32,19 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const [profile, workspace] = await Promise.all([
+    getCreatorProfile().catch(() => ({ name: "创作者" })),
+    getWorkspaceStats().catch(() => ({
+      outputDir: "output/",
+      outputDirAbsolute: "",
+      projectCount: 0,
+      totalSizeBytes: 0,
+      totalSizeLabel: "0 KB",
+      currentProjectName: "未创建",
+    })),
+  ]);
+
   return (
     <html lang="zh-CN" suppressHydrationWarning>
       <head>
@@ -49,9 +67,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         />
       </head>
       <body>
-        <AppSidebar />
-        <TopBar />
+        <AppSidebar initialWorkspace={workspace} />
+        <TopBar initialProfile={{ name: profile.name, avatarUrl: "/api/profile/avatar" }} />
         <div className="app-main-shell">{children}</div>
+        <Suspense fallback={null}><CreateProjectFlow /></Suspense>
       </body>
     </html>
   );

@@ -2,6 +2,7 @@ import { buildDocumentPrompt, buildDocumentRepairPrompt, buildProjectBriefPrompt
 import { parseModelJsonObject } from "../utils/modelJson.js";
 import { PLACEHOLDER_PHRASES, PROJECT_DOCUMENT_DEFINITIONS, type ProjectDocumentDefinition } from "../utils/documentDefinitions.js";
 import { callModel } from "./modelClient.js";
+import { AI_SLOP_PHRASES } from "../prompts/humanWritingRules.js";
 
 /** 占位语列表导出，层只相容性。 */
 export { PLACEHOLDER_PHRASES };
@@ -58,6 +59,11 @@ export function validateDocument(content: string, definition: ProjectDocumentDef
   if (!normalized) return ["文档为空"];
   if (normalized.length < definition.minLength) errors.push(`正文长度不足 ${definition.minLength} 字符`);
   for (const phrase of PLACEHOLDERS) if (normalized.includes(phrase)) errors.push(`包含占位语：${phrase}`);
+  const slopHits = AI_SLOP_PHRASES.filter((phrase) => normalized.includes(phrase));
+  if (slopHits.length >= 2) errors.push(`AI 味表达过多：${slopHits.slice(0, 4).join("、")}`);
+  const paragraphStarts = normalized.split(/\n{2,}/u).map((paragraph) => paragraph.trim().slice(0, 18)).filter(Boolean);
+  const repeatedStarts = paragraphStarts.filter((start, index) => paragraphStarts.indexOf(start) !== index);
+  if (repeatedStarts.length >= 2) errors.push("段落开头重复，缺少自然的表达变化");
   if (!new RegExp(`^#\\s+${definition.title}\\s*$`, "mu").test(normalized)) errors.push(`缺少一级标题：${definition.title}`);
   const headings = normalized.split("\n").filter((line) => /^##\s+/u.test(line)).map((line) => normalizeHeading(line.replace(/^##\s+/u, "")));
   for (const section of definition.requiredSections) {

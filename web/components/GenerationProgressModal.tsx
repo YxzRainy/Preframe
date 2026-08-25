@@ -12,6 +12,7 @@ export type GenerationUiStatus =
   | "generatingExecution"
   | "generatingPublishCopy"
   | "writing"
+  | "paused"
   | "completed"
   | "cancelled"
   | "failed";
@@ -47,6 +48,9 @@ interface GenerationProgressModalProps {
   endedAt: number | null;
   onCancel: () => void;
   cancelling: boolean;
+  onPause: () => void;
+  onResume: () => void;
+  pausing: boolean;
 }
 
 const STATUS_LABELS: Record<GenerationProgressStatus, string> = {
@@ -111,9 +115,11 @@ function activeItem(items: GenerationProgressItem[], job: GenerationJobView): Ge
 }
 
 function useElapsedLabel(open: boolean, startedAt: number | null, endedAt: number | null): string {
-  const [now, setNow] = useState(() => Date.now());
+  const [mounted, setMounted] = useState(false);
+  const [now, setNow] = useState<number>(() => 0);
 
   useEffect(() => {
+    setMounted(true);
     if (!open || !startedAt || endedAt) return;
     setNow(Date.now());
     const interval = window.setInterval(() => setNow(Date.now()), 1000);
@@ -121,7 +127,8 @@ function useElapsedLabel(open: boolean, startedAt: number | null, endedAt: numbe
   }, [endedAt, open, startedAt]);
 
   if (!startedAt) return "00:00";
-  return formatDuration((endedAt || now) - startedAt);
+  const endTs = endedAt || (mounted ? now : startedAt);
+  return formatDuration(endTs - startedAt);
 }
 
 function useRotatingPrompt(open: boolean, fileName?: string): string {
@@ -147,7 +154,7 @@ function useRotatingPrompt(open: boolean, fileName?: string): string {
   return prompts[index % prompts.length];
 }
 
-export function GenerationProgressModal({ open, job, progressItems, startedAt, endedAt, onCancel, cancelling }: GenerationProgressModalProps) {
+export function GenerationProgressModal({ open, job, progressItems, startedAt, endedAt, onCancel, cancelling, onPause, onResume, pausing }: GenerationProgressModalProps) {
   const items = progressItems.length ? progressItems : initialGenerationProgress();
   const completedCount = countCompleted(items);
   const totalCount = items.length;
@@ -163,7 +170,14 @@ export function GenerationProgressModal({ open, job, progressItems, startedAt, e
       onClose={() => undefined}
       closeDisabled
       size="md"
-      footer={<button className="secondary-button danger" type="button" onClick={onCancel} disabled={cancelling || job.status === "cancelled"}>{cancelling ? "正在撤销" : "撤销生成"}</button>}
+      footer={(
+        <div className="generation-modal-actions">
+          <button className="secondary-button" type="button" onClick={job.status === "paused" ? onResume : onPause} disabled={pausing || cancelling}>
+            {pausing ? "处理中" : job.status === "paused" ? "继续生成" : "暂停"}
+          </button>
+          <button className="secondary-button danger" type="button" onClick={onCancel} disabled={cancelling || job.status === "cancelled"}>{cancelling ? "正在撤销" : "撤销生成"}</button>
+        </div>
+      )}
     >
       <div className="generation-progress-panel">
         <div className="generation-timer-row">
@@ -177,7 +191,7 @@ export function GenerationProgressModal({ open, job, progressItems, startedAt, e
         <div className="generation-progressbar" aria-label="生成进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} role="progressbar">
           <i style={{ width: `${progress}%` }} />
         </div>
-        <p className="generation-current-doc">正在生成：<strong>{current?.fileName || "准备中"}</strong></p>
+        <p className="generation-current-doc">{job.status === "paused" ? "已暂停于：" : "正在生成："}<strong>{current?.fileName || "准备中"}</strong></p>
         <p className="generation-waiting-tip">小提示：{hint}</p>
         <ol className="generation-document-list">
           {items.map((item) => {

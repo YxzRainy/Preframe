@@ -3,7 +3,8 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { resolveProjectDirectory } from "../../../../../../src/services/projectManager";
 import { readProject } from "../../../../../../src/services/projectReader";
-import { buildShotTasks } from "../../../../../../src/services/shotTaskBuilder";
+import { buildShotTasks, mergeShotTaskState } from "../../../../../../src/services/shotTaskBuilder";
+import { syncProjectDerivedState } from "../../../../../../src/services/projectLifecycle";
 import type { ShotTask, ShotTaskStatus } from "../../../../../../src/types/shotTask";
 import { apiError } from "../../../_utils";
 
@@ -44,7 +45,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
 
     // 按需构建：读取项目文档，解析出 shotTasks
     const project = await readProject(slug);
-    const shotTasks = buildShotTasks(project.files);
+    const rebuilt = buildShotTasks(project.files);
+    const previous = Array.isArray(metadata.shotTasks) ? metadata.shotTasks as ShotTask[] : [];
+    const shotTasks = mergeShotTaskState(previous, rebuilt);
 
     // 持久化到 project.json
     if (shotTasks.length > 0) {
@@ -66,14 +69,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
 export async function POST(_request: Request, { params }: { params: Promise<{ slug: string }> }) {
   try {
     const { slug } = await params;
-    const projectDir = resolveProjectDirectory(slug);
-    const metadata = await readProjectJson(projectDir);
-
-    const project = await readProject(slug);
-    const shotTasks = buildShotTasks(project.files);
-
-    metadata.shotTasks = shotTasks;
-    await writeProjectJson(projectDir, metadata);
+    const { shotTasks } = await syncProjectDerivedState(slug);
 
     return NextResponse.json({ ok: true, success: true, shotTasks, source: "rebuilt" });
   } catch (error) {

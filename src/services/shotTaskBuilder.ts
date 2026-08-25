@@ -210,6 +210,111 @@ export function buildShotTasks(files: ContentFile[]): ShotTask[] {
   }
 }
 
+/**
+ * 文档变化后重建镜头任务时保留现场状态。
+ * 优先按镜头内容身份匹配，序号仅作为兜底；新增镜头使用 builder 的默认状态。
+ */
+export function mergeShotTaskState(previous: ShotTask[], rebuilt: ShotTask[]): ShotTask[] {
+  return mergeShotTaskStateWithMap(previous, rebuilt).tasks;
+}
+
+export interface ShotTaskStateMergeResult {
+  tasks: ShotTask[];
+  /** 旧任务 id 到新任务 id，用于同步迁移素材关系。 */
+  idMap: Map<string, string>;
+}
+
+function normalizedIdentityText(value: string | undefined): string {
+  return (value || "")
+    .toLocaleLowerCase("zh-CN")
+    .replace(/[\s\p{P}\p{S}]+/gu, "")
+    .slice(0, 240);
+}
+
+function shotIdentity(task: ShotTask): string {
+  return [
+    normalizedIdentityText(task.visualDescription),
+    normalizedIdentityText(task.narration),
+    normalizedIdentityText(task.shotType),
+    [...(task.requiredAssets || [])].map(normalizedIdentityText).sort().join("|"),
+  ].join("::");
+}
+
+function carryExecutionState(task: ShotTask, old: ShotTask): ShotTask {
+  return {
+    ...task,
+    status: old.status,
+    existingAssets: Array.isArray(old.existingAssets) ? [...old.existingAssets] : [],
+    missingAssets: Array.isArray(old.missingAssets) ? [...old.missingAssets] : [...task.missingAssets],
+    notes: old.notes,
+  };
+}
+
+function isCompatibleRevision(old: ShotTask, rebuilt: ShotTask): boolean {
+  const oldVisual = normalizedIdentityText(old.visualDescription);
+  const nextVisual = normalizedIdentityText(rebuilt.visualDescription);
+  const oldNarration = normalizedIdentityText(old.narration);
+  const nextNarration = normalizedIdentityText(rebuilt.narration);
+  const overlaps = (left: string, right: string) => left.length >= 2 && right.length >= 2 && (left.includes(right) || right.includes(left));
+  return overlaps(oldVisual, nextVisual) || overlaps(oldNarration, nextNarration);
+}
+
+/**
+ * 先按镜头内容身份迁移，再按相同 id 兜底。这样在分镜前部插入镜头时，
+ * 已拍摄状态不会因为序号整体后移而挂到错误的新镜头上。
+ */
+export function mergeShotTaskStateWithMap(previous: ShotTask[], rebuilt: ShotTask[]): ShotTaskStateMergeResult {
+  const previousById = new Map(previous.map((task) => [task.id, task]));
+  const previousByIdentity = new Map<string, ShotTask[]>();
+  for (const task of previous) {
+    const identity = shotIdentity(task);
+    if (!identity.replaceAll(":", "")) continue;
+    const matches = previousByIdentity.get(identity) || [];
+    matches.push(task);
+    previousByIdentity.set(identity, matches);
+  }
+
+  const usedPreviousIds = new Set<string>();
+  const matched = new Map<string, ShotTask>();
+  const idMap = new Map<string, string>();
+
+  // 同一 id 的增补式修改优先视为原镜头修订，避免被后方的相似新镜头抢占状态。
+  for (const task of rebuilt) {
+    const old = previousById.get(task.id);
+    if (!old || !isCompatibleRevision(old, task)) continue;
+    matched.set(task.id, old);
+    usedPreviousIds.add(old.id);
+    idMap.set(old.id, task.id);
+  }
+
+  for (const task of rebuilt) {
+    if (matched.has(task.id)) continue;
+    const candidates = previousByIdentity.get(shotIdentity(task)) || [];
+    const old = candidates.find((candidate) => !usedPreviousIds.has(candidate.id));
+    if (!old) continue;
+    matched.set(task.id, old);
+    usedPreviousIds.add(old.id);
+    idMap.set(old.id, task.id);
+  }
+
+  for (const task of rebuilt) {
+    if (matched.has(task.id)) continue;
+    const old = previousById.get(task.id);
+    if (!old || usedPreviousIds.has(old.id)) continue;
+    matched.set(task.id, old);
+    usedPreviousIds.add(old.id);
+    idMap.set(old.id, task.id);
+  }
+
+  return {
+    tasks: rebuilt.map((task) => {
+      const old = matched.get(task.id);
+      return old ? carryExecutionState(task, old) : task;
+    }),
+    idMap,
+  };
+}
+
 function buildShotTasksUnsafe(files: ContentFile[]): ShotTask[] {
   const doc04 = findFile(files, "04_");
   if (!doc04) return [];

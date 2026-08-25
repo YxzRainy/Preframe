@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { NewTaskDrawer, type NewTaskFormData } from "./NewTaskDrawer";
 import { ResultTabs, type ResultFile } from "./ResultTabs";
 import {
@@ -20,7 +21,7 @@ import { PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinition
 interface GenerateResponse { success: boolean; projectSlug: string; projectName?: string; files: ResultFile[]; partial?: boolean; failedStage?: string; error?: string; errorCode?: string; cancelled?: boolean; job?: GenerationJobView; }
 interface PublicModelStatus { providerLabel: string; model: string; configured: boolean; }
 
-const initialForm: NewTaskFormData = { projectName: "", topic: "", platform: "小红书", contentSubject: "个人博主", contentDomain: "", style: "专业但通俗", targetUser: "", extra: "" };
+const initialForm: NewTaskFormData = { projectName: "", topic: "", platform: "小红书", contentSubject: "", contentDomain: "", style: "专业但通俗", targetUser: "", extra: "" };
 const CREATE_PROJECT_DRAFT_KEY = "piance:create-project-draft:v1";
 const MODEL_CONFIGURATION_ERROR_CODES = new Set(["MODEL_UNAVAILABLE", "TRIAL_EXHAUSTED"]);
 const TOTAL_DOCUMENTS = PROJECT_DOCUMENT_DEFINITIONS.length;
@@ -31,6 +32,7 @@ const GENERATION_STAGE_LABELS: Record<GenerationUiStatus, string> = {
   generatingExecution: "生成成片执行稿",
   generatingPublishCopy: "生成发布承接话术",
   writing: "写入本地文件",
+  paused: "生成已暂停",
   completed: "完成",
   cancelled: "已撤销",
   failed: "生成失败",
@@ -49,7 +51,22 @@ function generationErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "生成失败，请稍后重试。";
 }
 
-export function GenerateWorkspace() {
+interface CreateProjectRequest {
+  id: string;
+  ideaId?: string;
+  projectName?: string;
+  topic?: string;
+  extra?: string;
+}
+
+interface GenerateWorkspaceProps {
+  presentation?: "page" | "modal";
+  openRequest?: CreateProjectRequest | null;
+  onOpenRequestHandled?: () => void;
+}
+
+export function GenerateWorkspace({ presentation = "page", openRequest = null, onOpenRequestHandled }: GenerateWorkspaceProps) {
+  const router = useRouter();
   const [form, setForm] = useState(initialForm);
   const [files, setFiles] = useState<ResultFile[]>([]);
   const [activeName, setActiveName] = useState("");
@@ -69,11 +86,13 @@ export function GenerateWorkspace() {
   const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
   const [generationEndedAt, setGenerationEndedAt] = useState<number | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [pausing, setPausing] = useState(false);
   const [modelLabel, setModelLabel] = useState("DeepSeek V4 Pro");
   const [modelStatus, setModelStatus] = useState<PublicModelStatus | null>(null);
   const [modelConfigOpen, setModelConfigOpen] = useState(false);
   const [draftSaved, setDraftSaved] = useState(false);
   const [modelConfigurationRequired, setModelConfigurationRequired] = useState(false);
+  const [sourceIdeaId, setSourceIdeaId] = useState("");
   const abortRef = useRef<AbortController | null>(null);
   const activeJobIdRef = useRef("");
   const cancelledJobIdRef = useRef("");
@@ -135,6 +154,31 @@ export function GenerateWorkspace() {
     }
   }, []);
 
+  // 灵感转换：从 URL query 预填选题主题与补充要求，并自动打开抽屉
+  useEffect(() => {
+    if (presentation !== "page") return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const topic = params.get("topic");
+    const extra = params.get("extra");
+    const projectName = params.get("projectName");
+    if (!topic && !extra && !projectName) return;
+    setForm((current) => ({
+      ...current,
+      topic: topic || current.topic,
+      extra: extra || current.extra,
+      projectName: projectName || current.projectName,
+    }));
+    setDrawerOpen(true);
+    if (window.history.replaceState) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("topic");
+      url.searchParams.delete("extra");
+      url.searchParams.delete("projectName");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, [presentation]);
+
   useEffect(() => {
     if (!draftHydratedRef.current) return;
     if (skipNextDraftSaveRef.current) {
@@ -160,10 +204,35 @@ export function GenerateWorkspace() {
   }, []);
 
   useEffect(() => {
-    const openDrawer = () => setDrawerOpen(true);
+    const openDrawer = (event: Event) => {
+      const detail = (event as CustomEvent<Partial<CreateProjectRequest>>).detail;
+      if (detail) {
+        setSourceIdeaId(detail.ideaId || "");
+        setForm((current) => ({
+          ...current,
+          projectName: detail.projectName || current.projectName,
+          topic: detail.topic || current.topic,
+          extra: detail.extra || current.extra,
+        }));
+      }
+      setDrawerOpen(true);
+    };
     window.addEventListener("piance-open-new-task", openDrawer);
     return () => window.removeEventListener("piance-open-new-task", openDrawer);
   }, []);
+
+  useEffect(() => {
+    if (!openRequest) return;
+    setSourceIdeaId(openRequest.ideaId || "");
+    setForm((current) => ({
+      ...current,
+      projectName: openRequest.projectName || current.projectName,
+      topic: openRequest.topic || current.topic,
+      extra: openRequest.extra || current.extra,
+    }));
+    setDrawerOpen(true);
+    onOpenRequestHandled?.();
+  }, [onOpenRequestHandled, openRequest]);
 
   useEffect(() => {
     if (!successNotice) return;
@@ -239,7 +308,7 @@ export function GenerateWorkspace() {
     const pendingName = form.projectName || form.topic || "内容项目";
     window.dispatchEvent(new CustomEvent("piance-current-project", { detail: { title: pendingName, status: "创建项目目录", tone: "working" } }));
     try {
-      const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, jobId }), signal: abortController.signal });
+      const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, jobId, ideaId: sourceIdeaId || undefined }), signal: abortController.signal });
       const data = await readJsonResponse<GenerateResponse>(response);
       if (cancelledJobIdRef.current === jobId || data.cancelled) return;
       if (data.job) {
@@ -272,6 +341,7 @@ export function GenerateWorkspace() {
       window.localStorage.removeItem(CREATE_PROJECT_DRAFT_KEY);
       setDraftSaved(false);
       window.dispatchEvent(new CustomEvent("piance-current-project", { detail: { title: displayName, status: `策划包已生成 · ${data.files.length}/${TOTAL_DOCUMENTS} 已完成`, tone: "ready", fileCount: data.files.length } }));
+      if (presentation === "modal") router.push(`/projects/${encodeURIComponent(data.projectSlug)}`);
     } catch (caught) {
       if (cancelledJobIdRef.current === jobId || (caught instanceof DOMException && caught.name === "AbortError")) return;
       const durationLabel = finishGenerationTimer();
@@ -319,7 +389,54 @@ export function GenerateWorkspace() {
     window.dispatchEvent(new CustomEvent("piance-current-project", { detail: { title: "等待创建项目", status: "未创建", tone: "muted" } }));
   }
 
+  async function changePauseState(action: "pause" | "resume") {
+    const jobId = activeJobIdRef.current || generationJob.jobId;
+    if (!jobId) return;
+    setPausing(true);
+    try {
+      const response = await fetch("/api/generate", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId, action }),
+      });
+      const data = await readJsonResponse<{ job?: GenerationJobView; error?: string }>(response);
+      if (!response.ok || !data.job) throw new Error(data.error || "生成任务状态更新失败。");
+      setGenerationJob(data.job);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "生成任务状态更新失败。");
+    } finally {
+      setPausing(false);
+    }
+  }
+
   const hasProject = Boolean(projectSlug && files.length);
+
+  if (presentation === "modal") {
+    return (
+      <>
+        <NewTaskDrawer
+          open={drawerOpen}
+          form={form}
+          loading={loading}
+          error={error}
+          errorTitle={errorTitle}
+          notice={cancelNotice}
+          noticeTitle={cancelNoticeTitle}
+          modelConfigured={Boolean(modelStatus?.configured)}
+          modelStatusLoading={modelStatus === null}
+          draftSaved={draftSaved}
+          modelConfigurationRequired={modelConfigurationRequired}
+          onChange={setField}
+          onSubmit={submit}
+          onClose={() => setDrawerOpen(false)}
+          onOpenModelConfig={() => setModelConfigOpen(true)}
+          onClearDraft={clearDraft}
+        />
+        <ModelConfigModal open={modelConfigOpen} onClose={() => setModelConfigOpen(false)} onSaved={() => refreshModelStatus().catch(() => undefined)} />
+        <GenerationProgressModal open={loading} job={generationJob} progressItems={generationProgress} startedAt={generationStartedAt} endedAt={generationEndedAt} cancelling={cancelling} pausing={pausing} onPause={() => changePauseState("pause")} onResume={() => changePauseState("resume")} onCancel={cancelGeneration} />
+      </>
+    );
+  }
 
   return (
     <main className={`home-workbench${loading ? " is-generating" : ""}${hasProject ? " has-project" : ""}`}>
@@ -400,7 +517,6 @@ export function GenerateWorkspace() {
         noticeTitle={cancelNoticeTitle}
         modelConfigured={Boolean(modelStatus?.configured)}
         modelStatusLoading={modelStatus === null}
-        modelStatusLabel={modelStatus?.configured ? `${modelStatus.providerLabel} · ${modelStatus.model}` : "尚未配置模型 API"}
         draftSaved={draftSaved}
         modelConfigurationRequired={modelConfigurationRequired}
         onChange={setField}
@@ -410,7 +526,7 @@ export function GenerateWorkspace() {
         onClearDraft={clearDraft}
       />
       <ModelConfigModal open={modelConfigOpen} onClose={() => setModelConfigOpen(false)} onSaved={() => refreshModelStatus().catch(() => undefined)} />
-      <GenerationProgressModal open={loading} job={generationJob} progressItems={generationProgress} startedAt={generationStartedAt} endedAt={generationEndedAt} cancelling={cancelling} onCancel={cancelGeneration} />
+      <GenerationProgressModal open={loading} job={generationJob} progressItems={generationProgress} startedAt={generationStartedAt} endedAt={generationEndedAt} cancelling={cancelling} pausing={pausing} onPause={() => changePauseState("pause")} onResume={() => changePauseState("resume")} onCancel={cancelGeneration} />
     </main>
   );
 }

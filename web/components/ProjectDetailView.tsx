@@ -6,6 +6,8 @@ import { AgentToolsPanel, type CoverSummary } from "./AgentToolsPanel";
 import { DocumentWorkspace } from "./DocumentWorkspace";
 import { ProjectSidebar } from "./ProjectSidebar";
 import { ShotExecutionWorkspace } from "./ShotExecutionWorkspace";
+import { StagePanel } from "./project/StagePanel";
+import { PublishPanel } from "./project/PublishPanel";
 import type { ResultFile } from "./ResultTabs";
 import { isPrimaryProjectDocument, isVisualPromptDocument } from "../../src/utils/documentDefinitions";
 import { readJsonResponse } from "../lib/readJsonResponse";
@@ -36,10 +38,12 @@ function detailProjectStatus(fileCount: number): string {
   return `已打开项目 · ${fileCount}/10 可用`;
 }
 
+type ProjectViewMode = "documents" | "execution" | "overview";
+
 export function ProjectDetailView({ slug }: { slug: string }) {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [activeName, setActiveName] = useState("");
-  const [viewMode, setViewMode] = useState<"documents" | "execution">("documents");
+  const [viewMode, setViewMode] = useState<ProjectViewMode>("documents");
   const [feedback, setFeedback] = useState("");
   const [assetPath, setAssetPath] = useState("");
   const [coverPrompt, setCoverPrompt] = useState("");
@@ -68,6 +72,19 @@ export function ProjectDetailView({ slug }: { slug: string }) {
     loadProject().catch((caught) => setError(caught instanceof Error ? caught.message : "项目读取失败。"))
       .finally(() => setLoading(false));
   }, [loadProject]);
+
+  // 支持 URL ?view=execution / overview 直接进入对应视图
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const v = params.get("view");
+    if (v === "execution" || v === "overview") {
+      setViewMode(v);
+      const url = new URL(window.location.href);
+      url.searchParams.delete("view");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
 
   const activeFile = useMemo(() => project?.files.find((file) => file.name === activeName) ?? project?.files[0], [project, activeName]);
   const isVisualPrompt = Boolean(activeFile && isVisualPromptDocument(activeFile.name));
@@ -143,6 +160,29 @@ export function ProjectDetailView({ slug }: { slug: string }) {
     } finally { setRegenerating(false); }
   }
 
+  async function retryActiveDocument() {
+    if (!activeFile) return;
+    const number = /^(\d{2})_/u.exec(activeFile.name)?.[1];
+    if (!number) return;
+    setRegenerating(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/regenerate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documents: [number] }),
+      });
+      const data = await readJsonResponse<{ status?: string; error?: string }>(response);
+      if (!response.ok) throw new Error(data.error || "当前文档重新生成失败。");
+      await loadProject(activeFile.name);
+      setNotice(`${activeFile.name} 已重新生成，上一版已归档。`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "当前文档重新生成失败。");
+      throw caught;
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
   async function copyCurrent() {
     if (!activeFile) return;
     try {
@@ -170,8 +210,9 @@ export function ProjectDetailView({ slug }: { slug: string }) {
   if (!project) return <main className="console-loading"><div className="product-alert alert-warning">{error || "项目不存在。"}</div><Link className="secondary-button" href="/projects">返回项目列表</Link></main>;
 
   return (
-    <main className={`project-console ${viewMode === "execution" ? "mode-execution" : ""}`}>
+    <main className={`project-console mode-${viewMode}`}>
       <ProjectSidebar
+        slug={slug}
         projectName={project.name}
         metadata={project.metadata}
         files={project.files}
@@ -204,6 +245,8 @@ export function ProjectDetailView({ slug }: { slug: string }) {
             refining={refining}
             scanning={scanning}
             generatingCover={generatingCover}
+            activeFileName={activeFile?.name || ""}
+            retryingDocument={regenerating}
             onFeedbackChange={setFeedback}
             onAssetPathChange={setAssetPath}
             onCoverPromptChange={setCoverPrompt}
@@ -211,10 +254,17 @@ export function ProjectDetailView({ slug }: { slug: string }) {
             onRefine={refine}
             onScan={scan}
             onCreateCover={createCover}
+            onRetryDocument={retryActiveDocument}
+            onDocumentChanged={() => loadProject(activeFile?.name)}
           />
         </>
-      ) : (
+      ) : viewMode === "execution" ? (
         <ShotExecutionWorkspace slug={slug} />
+      ) : (
+        <section className="project-overview-panel">
+          <StagePanel slug={slug} />
+          <PublishPanel slug={slug} />
+        </section>
       )}
     </main>
   );

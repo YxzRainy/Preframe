@@ -1,6 +1,7 @@
 import { validateCoverDocumentMarkdown } from "./generatePrompt.js";
 import { isCoverPublishingDocument } from "../utils/documentDefinitions.js";
 import { parseModelJsonObject } from "../utils/modelJson.js";
+import { HUMAN_WRITING_RULES } from "./humanWritingRules.js";
 
 export interface RefineDocument {
   label: string;
@@ -26,7 +27,8 @@ ${originals}
   "02_口播脚本.md": "# 口播脚本\\n..."
 }
 
-保留原内容中有效信息，只修改用户要求涉及的部分；输出应可直接替换为一份完整文档。${coverFormatRequirement}`;
+保留原内容中有效信息，只修改用户要求涉及的部分；输出应可直接替换为一份完整文档。
+${HUMAN_WRITING_RULES}${coverFormatRequirement}`;
 }
 
 export function parseRefinedContent(raw: string, filenames: string[]): Record<string, string> {

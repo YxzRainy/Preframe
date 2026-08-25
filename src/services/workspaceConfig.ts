@@ -2,6 +2,7 @@ import { access, mkdir, readdir, readFile, stat, unlink, writeFile } from "node:
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { writeJsonAtomicPath } from "./atomicJson.js";
 
 const DEFAULT_OUTPUT_DIR = "output";
 const WORKSPACE_CONFIG_PATH = path.resolve(process.cwd(), ".piance", "workspace.json");
@@ -10,6 +11,8 @@ export interface WorkspaceConfig {
   mode?: "project" | "external";
   relativePath?: string;
   absolutePath?: string;
+  /** 0.1 早期版本写入的字段，读取时迁移为 absolutePath。 */
+  outputDir?: string;
 }
 
 export interface WorkspaceStats {
@@ -25,9 +28,12 @@ function expandHome(input: string): string {
   return input.replace(/^~(?=$|[\\/])/, os.homedir());
 }
 
-function resolveOutputPath(config: WorkspaceConfig): string {
+export function resolveWorkspaceOutputPath(config: WorkspaceConfig): string {
   if (config.mode === "external" && config.absolutePath) {
     return expandHome(config.absolutePath);
+  }
+  if (typeof config.outputDir === "string" && config.outputDir.trim()) {
+    return path.resolve(process.cwd(), expandHome(config.outputDir.trim()));
   }
   return path.resolve(process.cwd(), config.relativePath || DEFAULT_OUTPUT_DIR);
 }
@@ -58,14 +64,14 @@ export function getOutputDirSync(): string {
   if (process.env.PIANCE_OUTPUT_DIR?.trim()) {
     return path.resolve(process.cwd(), expandHome(process.env.PIANCE_OUTPUT_DIR));
   }
-  return resolveOutputPath(readWorkspaceConfigSync());
+  return resolveWorkspaceOutputPath(readWorkspaceConfigSync());
 }
 
 export async function getOutputDir(): Promise<string> {
   if (process.env.PIANCE_OUTPUT_DIR?.trim()) {
     return path.resolve(process.cwd(), expandHome(process.env.PIANCE_OUTPUT_DIR));
   }
-  return resolveOutputPath(await readWorkspaceConfig());
+  return resolveWorkspaceOutputPath(await readWorkspaceConfig());
 }
 
 export function formatWorkspacePath(target: string): string {
@@ -96,20 +102,16 @@ export async function setOutputDir(absolutePath: string): Promise<string> {
   const expanded = expandHome(absolutePath);
   const resolved = path.resolve(expanded);
   await ensureOutputDir(resolved);
-  await mkdir(path.dirname(WORKSPACE_CONFIG_PATH), { recursive: true });
-  
   const config: WorkspaceConfig = { mode: "external", absolutePath: resolved };
-  await writeFile(WORKSPACE_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  await writeJsonAtomicPath(WORKSPACE_CONFIG_PATH, config);
   return resolved;
 }
 
 export async function resetOutputDir(): Promise<string> {
   const resolved = getDefaultOutputDir();
   await ensureOutputDir(resolved);
-  await mkdir(path.dirname(WORKSPACE_CONFIG_PATH), { recursive: true });
-  
   const config: WorkspaceConfig = { mode: "project", relativePath: "output" };
-  await writeFile(WORKSPACE_CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  await writeJsonAtomicPath(WORKSPACE_CONFIG_PATH, config);
   return resolved;
 }
 
@@ -133,7 +135,8 @@ export async function calculateDirectorySize(directory: string): Promise<number>
 export async function countProjectFolders(directory: string): Promise<number> {
   try {
     const entries = await readdir(directory, { withFileTypes: true });
-    return entries.filter((entry) => entry.isDirectory()).length;
+    // Hidden/system folders such as `.tmp` are workspace internals, not projects.
+    return entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith(".")).length;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
     throw error;

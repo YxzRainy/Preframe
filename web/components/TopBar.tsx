@@ -2,13 +2,14 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
+import { List, MoonStars, Sun } from "@phosphor-icons/react";
 import { StatusBadge } from "./StatusBadge";
 import { Modal } from "./Modal";
 import { AuthButton } from "./AuthButton";
 import { isPrimaryProjectDocument } from "../../src/utils/documentDefinitions";
 import { readJsonResponse } from "../lib/readJsonResponse";
 
-interface CreatorProfile {
+export interface CreatorProfile {
   name: string;
   avatarUrl: string;
 }
@@ -39,7 +40,7 @@ function fallbackProjectName(slug: string): string {
 }
 
 function routeState(pathname: string): CurrentProjectState {
-  if (pathname === "/") return { title: "等待创建项目", status: "未创建", tone: "muted" };
+  if (pathname === "/") return { title: "创作者工作台", status: "工作台", tone: "muted" };
   if (pathname === "/projects") return { title: "历史项目", status: "项目库", tone: "muted" };
   if (pathname.startsWith("/projects/")) {
     const slug = pathname.split("/").filter(Boolean).at(-1) || "";
@@ -59,10 +60,14 @@ function generatedStatus(fileCount?: number): string {
   return `${fileCount}/10 可用，部分文档生成失败`;
 }
 
-export function TopBar() {
+interface TopBarProps {
+  initialProfile: CreatorProfile;
+}
+
+export function TopBar({ initialProfile }: TopBarProps) {
   const pathname = usePathname();
   const [currentProject, setCurrentProject] = useState<CurrentProjectState>(() => routeState(pathname));
-  const [profile, setProfile] = useState<CreatorProfile>({ name: "创作者", avatarUrl: "/api/profile/avatar" });
+  const [profile, setProfile] = useState<CreatorProfile>(() => initialProfile);
   const [avatarFailed, setAvatarFailed] = useState(false);
   const [avatarVersion, setAvatarVersion] = useState(0);
   const [theme, setTheme] = useState("dark");
@@ -95,10 +100,6 @@ export function TopBar() {
     };
     window.addEventListener("piance-profile-updated", handleProfileUpdated);
     return () => window.removeEventListener("piance-profile-updated", handleProfileUpdated);
-  }, []);
-
-  useEffect(() => {
-    loadProfile().catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -156,36 +157,27 @@ export function TopBar() {
           type="button"
           className="theme-toggle"
           aria-label="切换浅色/深色主题"
+          aria-pressed={theme === "light"}
           title="切换浅色/深色"
           onClick={() => {
-            const nextTheme = theme === "dark" ? "light" : "dark";
+            const currentTheme = document.documentElement.getAttribute("data-theme") || "dark";
+            const nextTheme = currentTheme === "dark" ? "light" : "dark";
             document.documentElement.setAttribute("data-theme", nextTheme);
             localStorage.setItem("preframe:theme", nextTheme);
             setTheme(nextTheme);
             window.dispatchEvent(new Event("preframe-theme-changed"));
           }}
         >
-          {theme === "dark" ? (
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none">
-              <circle cx="12" cy="12" r="5"></circle>
-              <path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path>
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none">
-              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-            </svg>
-          )}
+          {theme === "dark" ? <Sun size={17} weight="duotone" /> : <MoonStars size={17} weight="duotone" />}
         </button>
       </div>
       <AuthButton />
       <div className="creator-entry" aria-label="创作者资料" onClick={() => window.dispatchEvent(new Event("piance-open-sidebar"))}>
         <span className="creator-avatar">{showAvatarImage ? <img src={avatarSrc} alt={`${profile.name}的头像`} onError={() => setAvatarFailed(true)} /> : <i />}</span>
-        <div><strong>{profile.name}</strong><small>本地工作台</small></div>
+        <div><strong>{profile.name}</strong></div>
       </div>
       <button className="mobile-menu-button" type="button" aria-label="打开菜单" onClick={() => window.dispatchEvent(new Event("piance-open-sidebar"))}>
-        <span />
-        <span />
-        <span />
+        <List size={21} weight="bold" />
       </button>
     </header>
   );

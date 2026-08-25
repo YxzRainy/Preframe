@@ -1,15 +1,31 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
+import type { ReactNode } from "react";
+import {
+  CheckSquare,
+  Database,
+  FolderOpen,
+  GearSix,
+  HardDrives,
+  House,
+  Lightbulb,
+  MoonStars,
+  PaperPlaneTilt,
+  Plus,
+  UserCircle,
+  Waveform,
+} from "@phosphor-icons/react";
 import { Modal } from "./Modal";
 import { ModelConfigModal } from "./ModelConfigModal";
 import { AccountMemoryModal } from "./AccountMemoryModal";
 import { CreatorProfileModal } from "./CreatorProfileModal";
+import { DataMaintenancePanel } from "./DataMaintenancePanel";
 import { readJsonResponse } from "../lib/readJsonResponse";
 
-interface WorkspaceState {
+export interface WorkspaceState {
   outputDir: string;
   outputDirAbsolute?: string;
   projectCount: number;
@@ -18,19 +34,39 @@ interface WorkspaceState {
   currentProjectName: string;
 }
 
-const NAV_ITEMS = [
-  { href: "/", label: "项目工作台", icon: "⌂", enabled: true },
-  { href: "/projects", label: "历史项目", icon: "□", enabled: true },
-] as const;
-
-function defaultWorkspace(): WorkspaceState {
-  return { outputDir: "output/", projectCount: 0, totalSizeBytes: 0, totalSizeLabel: "0 KB", currentProjectName: "未创建" };
+interface NavItem {
+  href: string;
+  label: string;
+  icon: ReactNode;
 }
 
-export function AppSidebar() {
+const NAV_ITEMS: readonly NavItem[] = [
+  { href: "/", label: "工作台", icon: <House size={19} weight="duotone" /> },
+  { href: "/projects", label: "项目库", icon: <FolderOpen size={19} weight="duotone" /> },
+  { href: "/publish", label: "发布中心", icon: <PaperPlaneTilt size={19} weight="duotone" /> },
+  { href: "/ideas", label: "灵感", icon: <Lightbulb size={19} weight="duotone" /> },
+  { href: "/tasks", label: "待办", icon: <CheckSquare size={19} weight="duotone" /> },
+];
+
+type SettingsTab = "model" | "memory" | "profile" | "workspace" | "maintenance" | "appearance";
+
+const SETTINGS_TABS: readonly { id: SettingsTab; label: string; icon: ReactNode }[] = [
+  { id: "model", label: "模型", icon: <GearSix size={17} /> },
+  { id: "memory", label: "创作偏好", icon: <Waveform size={17} /> },
+  { id: "profile", label: "创作者资料", icon: <UserCircle size={17} /> },
+  { id: "workspace", label: "工作区", icon: <HardDrives size={17} /> },
+  { id: "maintenance", label: "数据维护", icon: <Database size={17} /> },
+  { id: "appearance", label: "外观", icon: <MoonStars size={17} /> },
+];
+
+interface AppSidebarProps {
+  initialWorkspace: WorkspaceState;
+}
+
+export function AppSidebar({ initialWorkspace }: AppSidebarProps) {
   const pathname = usePathname();
-  const [workspace, setWorkspace] = useState<WorkspaceState>(defaultWorkspace);
-  const [currentProjectName, setCurrentProjectName] = useState("未创建");
+  const [workspace, setWorkspace] = useState<WorkspaceState>(() => initialWorkspace);
+  const [currentProjectName, setCurrentProjectName] = useState(() => initialWorkspace.currentProjectName || "未创建");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [savingOutputDir, setSavingOutputDir] = useState(false);
   const [workspaceError, setWorkspaceError] = useState("");
@@ -39,20 +75,7 @@ export function AppSidebar() {
   const [accountMemoryOpen, setAccountMemoryOpen] = useState(false);
   const [creatorProfileOpen, setCreatorProfileOpen] = useState(false);
   const [workspaceSettingsOpen, setWorkspaceSettingsOpen] = useState(false);
-  const [workspaceExpanded, setWorkspaceExpanded] = useState(true);
-
-  useEffect(() => {
-    const saved = localStorage.getItem("piance-workspace-expanded");
-    if (saved !== null) {
-      setWorkspaceExpanded(saved === "true");
-    }
-  }, []);
-
-  const toggleWorkspace = () => {
-    const next = !workspaceExpanded;
-    setWorkspaceExpanded(next);
-    localStorage.setItem("piance-workspace-expanded", String(next));
-  };
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("model");
 
   const loadWorkspace = useCallback(async (projectName = currentProjectName) => {
     const response = await fetch("/api/workspace");
@@ -61,10 +84,6 @@ export function AppSidebar() {
     const next = data.workspace as WorkspaceState;
     setWorkspace({ ...next, currentProjectName: projectName });
   }, [currentProjectName]);
-
-  useEffect(() => {
-    loadWorkspace().catch((error) => setWorkspaceError(error instanceof Error ? error.message : "本地工作区读取失败。"));
-  }, [loadWorkspace]);
 
   useEffect(() => {
     const openSidebar = () => setMobileOpen(true);
@@ -133,15 +152,18 @@ export function AppSidebar() {
     return () => window.removeEventListener("piance-current-project", handler);
   }, [loadWorkspace]);
 
-  const activePath = useMemo(() => pathname === "/projects" || pathname.startsWith("/projects/") ? "/projects" : "/", [pathname]);
+  const activePath = useMemo(() => {
+    if (pathname === "/" ) return "/";
+    if (pathname === "/publish" || pathname.startsWith("/publish/")) return "/publish";
+    if (pathname === "/ideas" || pathname.startsWith("/ideas/")) return "/ideas";
+    if (pathname === "/tasks" || pathname.startsWith("/tasks/")) return "/tasks";
+    if (pathname === "/projects" || pathname.startsWith("/projects/")) return "/projects";
+    return "/";
+  }, [pathname]);
 
   function createProject() {
     setMobileOpen(false);
-    if (pathname === "/") {
-      window.dispatchEvent(new Event("piance-open-new-task"));
-      return;
-    }
-    window.location.href = "/";
+    window.dispatchEvent(new Event("piance-open-new-task"));
   }
 
   function savedModelConfig(label: string) {
@@ -189,77 +211,110 @@ export function AppSidebar() {
     <aside className={`app-sidebar ${mobileOpen ? "open" : ""}`}>
       <div className="app-sidebar-brand">
         <span className="app-sidebar-logo"><img src="/brand-icon.png" alt="片策" /></span>
-        <div><strong>片策</strong><small>短视频前期策划工作台</small></div>
+        <div><strong>片策</strong><small>PREFRAME STUDIO</small></div>
       </div>
 
-      <button className="sidebar-create-button" type="button" onClick={createProject}><span>＋</span>创建内容项目</button>
+      <button className="sidebar-create-button create-project-entry" type="button" onClick={createProject}><Plus size={18} weight="bold" />新建项目</button>
 
       <nav className="app-nav" aria-label="片策导航">
         {NAV_ITEMS.map((item) => (
-          <Link className={activePath === item.href ? "active" : ""} href={item.href} onClick={() => setMobileOpen(false)} key={item.label}><span>{item.icon}</span>{item.label}</Link>
+          <Link className={activePath === item.href ? "active" : ""} href={item.href} onClick={() => setMobileOpen(false)} key={item.label}><span>{item.icon}</span>{item.label}<i /></Link>
         ))}
-        <button type="button" className={settingsCenterOpen || modelConfigOpen || accountMemoryOpen ? "active" : ""} title="设置中心" onClick={() => { setMobileOpen(false); setSettingsCenterOpen(true); }}><span>⚙</span>设置中心</button>
+        <button type="button" className={settingsCenterOpen ? "active" : ""} title="设置" onClick={() => { setMobileOpen(false); setSettingsCenterOpen(true); }}><span><GearSix size={19} weight="duotone" /></span>设置<i /></button>
       </nav>
 
-      <section className="workspace-card sidebar-workspace-collapsible">
-        <button type="button" className="workspace-card-toggle" onClick={toggleWorkspace}>
-          <h2>本地工作区</h2>
+      <section className="workspace-card">
+        <header>
+          <div><HardDrives size={16} /><h2>本地空间</h2></div>
           <span>{workspace.projectCount} 个项目</span>
-        </button>
-        {workspaceExpanded && (
-          <div className="workspace-card-content">
-            <dl>
-              <div><dt>当前项目</dt><dd title={currentProjectName}>{currentProjectName}</dd></div>
-              <div><dt>占用空间</dt><dd>{workspace.totalSizeLabel}</dd></div>
-              <div>
-                <dt>输出目录</dt>
-                <dd title={workspace.outputDirAbsolute || workspace.outputDir}>
-                  {workspace.outputDirAbsolute && !workspace.outputDir.includes("项目内 output")
-                    ? workspace.outputDirAbsolute.split(/[/\\]/).pop() || workspace.outputDirAbsolute
-                    : "项目内 output/"}
-                </dd>
-              </div>
-            </dl>
-          </div>
-        )}
+        </header>
+        <p title={currentProjectName}>{currentProjectName === "未创建" ? workspace.totalSizeLabel : currentProjectName}</p>
         {workspaceError && <p className="workspace-error">{workspaceError}</p>}
       </section>
     </aside>
     <Modal
       open={settingsCenterOpen}
       title="设置中心"
-      description="全局配置中心"
       onClose={() => setSettingsCenterOpen(false)}
-      size="sm"
+      size="xl"
     >
-      <div className="settings-center-actions">
-        <button type="button" onClick={() => { setSettingsCenterOpen(false); setModelConfigOpen(true); }}>
-          <strong>模型配置</strong>
-          <span>生成模型与连接参数</span>
-        </button>
-        <button type="button" onClick={() => { setSettingsCenterOpen(false); setAccountMemoryOpen(true); }}>
-          <strong>账号记忆</strong>
-          <span>创作者账号画像</span>
-        </button>
-        <button type="button" onClick={() => { setSettingsCenterOpen(false); setCreatorProfileOpen(true); }}>
-          <strong>创作者资料</strong>
-          <span>编辑昵称与头像</span>
-        </button>
-        <button type="button" onClick={() => { setSettingsCenterOpen(false); setWorkspaceSettingsOpen(true); }}>
-          <strong>工作区目录</strong>
-          <span>输出与存储位置</span>
-        </button>
-        <button type="button" onClick={() => { 
-          setSettingsCenterOpen(false); 
-          const currentTheme = document.documentElement.getAttribute("data-theme") || "dark";
-          const nextTheme = currentTheme === "dark" ? "light" : "dark";
-          document.documentElement.setAttribute("data-theme", nextTheme);
-          localStorage.setItem("preframe:theme", nextTheme);
-          window.dispatchEvent(new Event("preframe-theme-changed"));
-        }}>
-          <strong>外观设置</strong>
-          <span>切换深浅色主题</span>
-        </button>
+      <div className="settings-panel">
+        <nav className="settings-panel-nav" aria-label="设置分类">
+          {SETTINGS_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={settingsTab === tab.id ? "active" : ""}
+              onClick={() => setSettingsTab(tab.id)}
+            >
+              <span>{tab.icon}</span>{tab.label}
+            </button>
+          ))}
+        </nav>
+        <div className="settings-panel-content">
+          {settingsTab === "model" && (
+            <div className="settings-section">
+              <h3>模型配置</h3>
+              <p className="settings-section-desc">生成模型与连接参数，影响内容生成的质量与速度。</p>
+              <button type="button" className="settings-section-action" onClick={() => { setSettingsCenterOpen(false); setModelConfigOpen(true); }}>打开模型配置</button>
+            </div>
+          )}
+          {settingsTab === "memory" && (
+            <div className="settings-section">
+              <h3>创作偏好</h3>
+              <p className="settings-section-desc">账号内容方向的轻量画像，帮助模型理解你的内容风格与定位。</p>
+              <button type="button" className="settings-section-action" onClick={() => { setSettingsCenterOpen(false); setAccountMemoryOpen(true); }}>编辑创作偏好</button>
+            </div>
+          )}
+          {settingsTab === "profile" && (
+            <div className="settings-section">
+              <h3>创作者资料</h3>
+              <p className="settings-section-desc">编辑昵称与头像，展示在你的工作台与项目中。</p>
+              <button type="button" className="settings-section-action" onClick={() => { setSettingsCenterOpen(false); setCreatorProfileOpen(true); }}>编辑资料</button>
+            </div>
+          )}
+          {settingsTab === "workspace" && (
+            <div className="settings-section">
+              <h3>工作区目录</h3>
+              <p className="settings-section-desc">配置项目文档的本地输出目录。</p>
+              <div className="settings-workspace-current">
+                <label>当前输出目录</label>
+                <div className="settings-workspace-path" title={workspace.outputDirAbsolute || workspace.outputDir}>
+                  {workspace.outputDirAbsolute || workspace.outputDir}
+                </div>
+              </div>
+              <div className="settings-section-row">
+                <button type="button" className="settings-section-action" onClick={pickExternalDir} disabled={savingOutputDir}>
+                  {savingOutputDir ? "更改中…" : "更改外部目录"}
+                </button>
+                {workspace.outputDirAbsolute && workspace.outputDirAbsolute !== workspace.outputDir && !workspace.outputDir.includes("项目内 output") && (
+                  <button type="button" className="settings-section-action secondary" onClick={restoreDefaultOutputDir} disabled={savingOutputDir}>恢复项目内 output/</button>
+                )}
+              </div>
+              {workspaceError && <p className="settings-section-error">{workspaceError}</p>}
+            </div>
+          )}
+          {settingsTab === "appearance" && (
+            <div className="settings-section">
+              <h3>外观</h3>
+              <p className="settings-section-desc">切换深浅色主题，适应不同环境下的创作节奏。</p>
+              <button
+                type="button"
+                className="settings-section-action"
+                onClick={() => {
+                  const currentTheme = document.documentElement.getAttribute("data-theme") || "dark";
+                  const nextTheme = currentTheme === "dark" ? "light" : "dark";
+                  document.documentElement.setAttribute("data-theme", nextTheme);
+                  localStorage.setItem("preframe:theme", nextTheme);
+                  window.dispatchEvent(new Event("preframe-theme-changed"));
+                }}
+              >
+                切换深浅色主题
+              </button>
+            </div>
+          )}
+          {settingsTab === "maintenance" && <DataMaintenancePanel />}
+        </div>
       </div>
     </Modal>
     <Modal
@@ -272,7 +327,7 @@ export function AppSidebar() {
       <div className="workspace-settings-content">
         <div style={{ marginBottom: 16 }}>
           <label style={{ fontSize: 12, color: "var(--muted)", display: "block", marginBottom: 8 }}>当前输出目录</label>
-          <div style={{ padding: "10px 12px", background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 8, wordBreak: "break-all", fontSize: 13 }}>
+          <div style={{ padding: "10px 12px", background: "var(--surface)", border: "1px solid var(--line)", borderRadius: 4, wordBreak: "break-all", fontSize: 13 }}>
             {workspace.outputDirAbsolute || workspace.outputDir}
           </div>
         </div>
