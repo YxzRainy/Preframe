@@ -28,6 +28,8 @@ export interface AdaptInput {
   /** 创作偏好（如存在） */
   creationPreferences?: string;
   signal?: AbortSignal;
+  /** Web API route can rethrow so the shared model-access layer returns a configuration error code. */
+  throwOnModelError?: boolean;
 }
 
 export interface AdaptResult {
@@ -120,6 +122,7 @@ export async function adaptPlatformVariants(input: AdaptInput): Promise<AdaptRes
   try {
     raw = await callModel(buildPrompt(input), { signal: input.signal });
   } catch (err) {
+    if (input.throwOnModelError) throw err;
     return {
       ok: false,
       variants: {},

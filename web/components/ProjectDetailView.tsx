@@ -13,6 +13,7 @@ import { StatusBadge } from "./StatusBadge";
 import type { ResultFile } from "./ResultTabs";
 import { isPrimaryProjectDocument, isVisualPromptDocument, PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinitions";
 import { readJsonResponse } from "../lib/readJsonResponse";
+import { promptForModelConfig, withLocalModelConfig } from "../lib/localModelConfig";
 
 interface ProjectDetail {
   slug: string;
@@ -165,9 +166,12 @@ export function ProjectDetailView({ slug }: { slug: string }) {
     if (!activeFile) return;
     setRefining(true); setError(""); setNotice("");
     try {
-      const response = await fetch("/api/refine", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectSlug: slug, fileName: activeFile.name, feedback }) });
-      const data = await readJsonResponse<{ file: ResultFile; error?: string }>(response);
-      if (!response.ok) throw new Error(data.error || "修改失败。");
+      const response = await fetch("/api/refine", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(withLocalModelConfig({ projectSlug: slug, fileName: activeFile.name, feedback })) });
+      const data = await readJsonResponse<{ file: ResultFile; error?: string; errorCode?: string }>(response);
+      if (!response.ok) {
+        promptForModelConfig(data.errorCode);
+        throw new Error(data.error || "修改失败。");
+      }
       await loadProject(data.file.name);
       setFeedback("");
       setNotice(`已生成 ${data.file.name}，原文件未覆盖。`);
@@ -217,9 +221,12 @@ export function ProjectDetailView({ slug }: { slug: string }) {
   async function regenerateInvalidDocuments() {
     setRegenerating(true); setError(""); setNotice("");
     try {
-      const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/regenerate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ documents: [] }) });
-      const data = await readJsonResponse<{ status?: string; error?: string }>(response);
-      if (!response.ok) throw new Error(data.error || "异常文档重新生成失败。");
+      const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/regenerate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(withLocalModelConfig({ documents: [] })) });
+      const data = await readJsonResponse<{ status?: string; error?: string; errorCode?: string }>(response);
+      if (!response.ok) {
+        promptForModelConfig(data.errorCode);
+        throw new Error(data.error || "异常文档重新生成失败。");
+      }
       await loadProject();
       if (data.status === "complete") setNotice("异常文档已修复，当前项目 10/10 可用。");
       else setError("重试已结束，仍有文档未通过质量校验。失败项没有写入本地，请查看具体原因。");
@@ -234,10 +241,13 @@ export function ProjectDetailView({ slug }: { slug: string }) {
       const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/regenerate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ documents: [number] }),
+        body: JSON.stringify(withLocalModelConfig({ documents: [number] })),
       });
-      const data = await readJsonResponse<{ status?: string; documentsStatus?: Record<string, DocumentStatusView>; error?: string }>(response);
-      if (!response.ok) throw new Error(data.error || "当前文档重新生成失败。");
+      const data = await readJsonResponse<{ status?: string; documentsStatus?: Record<string, DocumentStatusView>; error?: string; errorCode?: string }>(response);
+      if (!response.ok) {
+        promptForModelConfig(data.errorCode);
+        throw new Error(data.error || "当前文档重新生成失败。");
+      }
       await loadProject(fileName);
       const updated = data.documentsStatus?.[number];
       if (updated?.generated || updated?.status === "completed") {

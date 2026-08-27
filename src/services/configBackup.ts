@@ -17,34 +17,15 @@ function dataDir(): string {
 }
 
 function included(relativePath: string): boolean {
-  if (relativePath === "diagnostics.jsonl") return false;
+  if (relativePath === "diagnostics.jsonl" || relativePath === "model-config.json") return false;
   if (EXCLUDED_PREFIXES.some((prefix) => relativePath.startsWith(prefix))) return false;
   return relativePath.endsWith(".json") || relativePath.startsWith("profile/");
 }
 
 export async function createConfigBackup(includeSecrets = false): Promise<ConfigBackupV1> {
   await mkdir(dataDir(), { recursive: true });
-  let files = await collectArchiveFiles(dataDir(), included);
-  if (!includeSecrets) {
-    files = await Promise.all(files.map(async (file) => {
-      if (file.path !== "model-config.json") return file;
-      const parsed = JSON.parse(Buffer.from(file.contentBase64, "base64").toString("utf8")) as Record<string, unknown>;
-      if ("apiKey" in parsed) parsed.apiKey = "__PREFRAME_REDACTED__";
-      const content = Buffer.from(`${JSON.stringify(parsed, null, 2)}\n`, "utf8");
-      const { sha256 } = await import("./portableArchive.js");
-      return { path: file.path, size: content.byteLength, sha256: sha256(content), contentBase64: content.toString("base64") };
-    }));
-  }
+  const files = await collectArchiveFiles(dataDir(), included);
   return { kind: "preframe-config", version: 1, exportedAt: new Date().toISOString(), secretsIncluded: includeSecrets, files };
-}
-
-async function preservedApiKey(): Promise<string> {
-  try {
-    const parsed = JSON.parse(await readFile(path.join(dataDir(), "model-config.json"), "utf8")) as Record<string, unknown>;
-    return typeof parsed.apiKey === "string" ? parsed.apiKey : "";
-  } catch {
-    return "";
-  }
 }
 
 export async function restoreConfigBackup(input: unknown): Promise<{ restoredFiles: number; rollbackBackupPath: string }> {
@@ -53,16 +34,7 @@ export async function restoreConfigBackup(input: unknown): Promise<{ restoredFil
   if (archive.kind !== "preframe-config" || archive.version !== 1) throw new Error("不支持的配置备份版本。");
   const files = validateArchiveFiles(archive.files);
   const rollbackBackupPath = await writeInternalBackup("before-restore");
-  const currentKey = await preservedApiKey();
-  const prepared = (await Promise.all(files.map(async (file) => {
-    if (file.path !== "model-config.json") return file;
-    const parsed = JSON.parse(Buffer.from(file.contentBase64, "base64").toString("utf8")) as Record<string, unknown>;
-    if (parsed.apiKey === "__PREFRAME_REDACTED__" && !currentKey) return null;
-    if (parsed.apiKey === "__PREFRAME_REDACTED__") parsed.apiKey = currentKey;
-    const content = Buffer.from(`${JSON.stringify(parsed, null, 2)}\n`, "utf8");
-    const { sha256 } = await import("./portableArchive.js");
-    return { path: file.path, size: content.byteLength, sha256: sha256(content), contentBase64: content.toString("base64") };
-  }))).filter((file): file is PortableArchiveFile => Boolean(file));
+  const prepared: PortableArchiveFile[] = files;
 
   const staging = path.join(dataDir(), `.restore-${process.pid}-${Date.now()}`);
   try {
@@ -88,6 +60,6 @@ export async function writeInternalBackup(label: string): Promise<string> {
   await mkdir(directory, { recursive: true });
   const safeLabel = label.replace(/[^a-z0-9_-]+/giu, "-").replace(/^-+|-+$/gu, "") || "backup";
   const target = path.join(directory, `${safeLabel}-${new Date().toISOString().replace(/[:.]/gu, "-")}.json`);
-  await writeFile(target, `${JSON.stringify(backup, null, 2)}\n`, "utf8");
+  await writeFile(target, `${JSON.stringify(backup, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   return target;
 }

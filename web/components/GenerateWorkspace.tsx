@@ -16,6 +16,7 @@ import { formatDuration } from "../../src/utils/generationTiming";
 import { ApiPayloadError, readJsonResponse } from "../lib/readJsonResponse";
 import { ModelConfigModal } from "./ModelConfigModal";
 import { PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinitions";
+import { readLocalModelConfig, withLocalModelConfig } from "../lib/localModelConfig";
 
 interface GenerateResponse {
   success: boolean;
@@ -31,11 +32,17 @@ interface GenerateResponse {
   cancelled?: boolean;
   job?: GenerationJobView;
 }
-interface PublicModelStatus { providerLabel: string; model: string; configured: boolean; }
+interface PublicModelStatus {
+  providerLabel: string;
+  model: string;
+  configured: boolean;
+  message: string;
+  canConfigure: boolean;
+}
 
 const initialForm: NewTaskFormData = { projectName: "", topic: "", platform: "小红书", contentSubject: "", contentDomain: "", style: "专业但通俗", targetUser: "", extra: "" };
 const CREATE_PROJECT_DRAFT_KEY = "piance:create-project-draft:v1";
-const MODEL_CONFIGURATION_ERROR_CODES = new Set(["MODEL_UNAVAILABLE", "TRIAL_EXHAUSTED"]);
+const MODEL_CONFIGURATION_ERROR_CODES = new Set(["DEFAULT_MODEL_UNAVAILABLE", "CUSTOM_MODEL_UNAVAILABLE"]);
 const TOTAL_DOCUMENTS = PROJECT_DOCUMENT_DEFINITIONS.length;
 const GENERATION_STAGE_LABELS: Record<GenerationUiStatus, string> = {
   idle: "等待创建项目",
@@ -133,15 +140,28 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
 
   async function refreshModelStatus() {
     const response = await fetch("/api/model-config", { cache: "no-store" });
-    const data = await readJsonResponse<{ config?: PublicModelStatus; error?: string }>(response);
-    if (!response.ok || !data.config) throw new Error(data.error || "模型配置读取失败。");
-    setModelStatus(data.config);
+    const data = await readJsonResponse<{ config?: { providerLabel: string; model: string; configured: boolean }; error?: string }>(response);
+    if (!response.ok || !data.config) throw new Error(data.error || "生成服务状态读取失败。");
+    const localConfig = readLocalModelConfig();
+    const configured = Boolean(localConfig || data.config.configured);
+    const message = localConfig
+      ? "当前使用保存在这个浏览器中的 DeepSeek API Key"
+      : data.config.configured
+        ? "服务器 DeepSeek Flash 已就绪"
+        : "服务器默认模型不可用，请配置自己的 DeepSeek API Key";
+    setModelStatus({
+      providerLabel: data.config.providerLabel,
+      model: data.config.model,
+      configured,
+      message,
+      canConfigure: true,
+    });
     setModelLabel(`${data.config.providerLabel} · ${data.config.model}`);
-    if (data.config.configured) setModelConfigurationRequired(false);
+    if (configured) setModelConfigurationRequired(false);
   }
 
   useEffect(() => {
-    refreshModelStatus().catch(() => setModelStatus({ providerLabel: "", model: "", configured: false }));
+    refreshModelStatus().catch(() => setModelStatus({ providerLabel: "", model: "", configured: false, message: "无法检查生成服务状态，请稍后重试。", canConfigure: false }));
     try {
       const raw = window.localStorage.getItem(CREATE_PROJECT_DRAFT_KEY);
       if (raw) {
@@ -213,7 +233,11 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
       refreshModelStatus().catch(() => undefined);
     };
     window.addEventListener("piance-model-config-updated", handler);
-    return () => window.removeEventListener("piance-model-config-updated", handler);
+    window.addEventListener("storage", handler);
+    return () => {
+      window.removeEventListener("piance-model-config-updated", handler);
+      window.removeEventListener("storage", handler);
+    };
   }, []);
 
   useEffect(() => {
@@ -303,7 +327,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
     event.preventDefault();
     if (!modelStatus?.configured) {
       setErrorTitle("尚未配置模型 API");
-      setError("请先配置自定义模型 API，或在服务端提供默认模型环境变量后再生成。");
+      setError(modelStatus?.message || "请先配置 DeepSeek API Key 后再生成。");
       setModelConfigurationRequired(true);
       return;
     }
@@ -321,7 +345,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
     const pendingName = form.projectName || form.topic || "内容项目";
     window.dispatchEvent(new CustomEvent("piance-current-project", { detail: { title: pendingName, status: "创建项目目录", tone: "working" } }));
     try {
-      const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, jobId, ideaId: sourceIdeaId || undefined }), signal: abortController.signal });
+      const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(withLocalModelConfig({ ...form, jobId, ideaId: sourceIdeaId || undefined })), signal: abortController.signal });
       const data = await readJsonResponse<GenerateResponse>(response);
       if (cancelledJobIdRef.current === jobId || data.cancelled) return;
       if (data.job) {
@@ -362,7 +386,9 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
       const durationLabel = finishGenerationTimer();
       setErrorTitle("生成未完成");
       setError(`本次运行：${durationLabel}。已清理临时文件。${generationErrorMessage(caught)}`);
-      setModelConfigurationRequired(caught instanceof Error && MODEL_CONFIGURATION_ERROR_CODES.has((caught as Error & { code?: string }).code || ""));
+      const needsModelConfig = caught instanceof Error && MODEL_CONFIGURATION_ERROR_CODES.has((caught as Error & { code?: string }).code || "");
+      setModelConfigurationRequired(needsModelConfig);
+      if (needsModelConfig) setModelConfigOpen(true);
       setDrawerOpen(true);
       window.dispatchEvent(new CustomEvent("piance-current-project", { detail: { title: "等待创建项目", status: "未创建", tone: "muted" } }));
     }
@@ -438,6 +464,8 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
           notice={cancelNotice}
           noticeTitle={cancelNoticeTitle}
           modelConfigured={Boolean(modelStatus?.configured)}
+          modelStatusText={modelStatus?.message}
+          canConfigureModel={Boolean(modelStatus?.canConfigure)}
           modelStatusLoading={modelStatus === null}
           draftSaved={draftSaved}
           modelConfigurationRequired={modelConfigurationRequired}
@@ -532,6 +560,8 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
         notice={cancelNotice}
         noticeTitle={cancelNoticeTitle}
         modelConfigured={Boolean(modelStatus?.configured)}
+        modelStatusText={modelStatus?.message}
+        canConfigureModel={Boolean(modelStatus?.canConfigure)}
         modelStatusLoading={modelStatus === null}
         draftSaved={draftSaved}
         modelConfigurationRequired={modelConfigurationRequired}

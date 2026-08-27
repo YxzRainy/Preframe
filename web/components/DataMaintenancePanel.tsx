@@ -62,7 +62,7 @@ export function DataMaintenancePanel() {
       const response = await fetch("/api/maintenance/backup", { method: "POST", body: form });
       const data = await readJsonResponse<{ restored?: { restoredFiles: number; rollbackBackupPath: string }; error?: string }>(response);
       if (!response.ok) throw new Error(data.error || "配置恢复失败。");
-      setMessage(`已恢复 ${data.restored?.restoredFiles || 0} 个本地配置文件；恢复前备份已保留，API Key 沿用本机当前值。`);
+      setMessage(`已恢复 ${data.restored?.restoredFiles || 0} 个本地配置文件；恢复前备份已保留，浏览器中的个人 DeepSeek Key 不受影响。`);
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "配置恢复失败。");
@@ -101,7 +101,7 @@ export function DataMaintenancePanel() {
   return (
     <div className="maintenance-panel">
       <section className="maintenance-block">
-        <div><h3>本地配置备份</h3><p>备份 `.piance` 中的设置、灵感、素材索引和发布记录。导出文件不包含明文 API Key。</p></div>
+        <div><h3>本地配置备份</h3><p>备份 `.piance` 中的设置、灵感、素材索引和发布记录。浏览器中的个人 DeepSeek Key 不参与备份。</p></div>
         <div className="maintenance-actions">
           <button type="button" className="settings-section-action" onClick={downloadBackup}><DownloadSimple size={16} />导出备份</button>
           <button type="button" className="settings-section-action secondary" onClick={() => restoreInput.current?.click()} disabled={Boolean(busy)}><UploadSimple size={16} />{busy === "restore" ? "恢复中" : "恢复备份"}</button>

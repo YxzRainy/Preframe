@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { apiError, readRequestJson } from "../../../../_utils";
+import { apiError, assertSameOrigin, readRequestJson } from "../../../../_utils";
 import { findSession, applyAdaptedVariants, revertAdaptedVariants } from "../../../../../../../src/services/publishSessionStore.js";
 import { adaptPlatformVariants, ADAPTED_SOURCE } from "../../../../../../../src/services/platformAdapter.js";
 import { getAccountMemory, sanitizeAccountMemoryForPrompt } from "../../../../../../../src/services/accountMemory.js";
 import { readProject } from "../../../../../../../src/services/projectReader.js";
 import { PUBLISHER_PLATFORMS, type PublisherPlatform } from "../../../../../../../src/types/publisher.js";
+import { runWithWebModelAccess } from "../../../../../../lib/model-access";
 
 export const runtime = "nodejs";
 // 智能适配是一次性模型调用，可能较慢
@@ -33,6 +34,7 @@ async function readProjectTopic(projectSlug: string | undefined): Promise<string
 /** 用户主动点击「优化各平台版本」：一次模型调用适配所有平台，失败保留原版本 */
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
+    assertSameOrigin(request);
     const { id } = await params;
     const session = await findSession(id);
     if (!session) return apiError(new Error("发布会话不存在。"), "publisher", "发布会话不存在。", 404);
@@ -55,13 +57,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
     const projectTopic = await readProjectTopic(session.projectSlug);
 
-    const result = await adaptPlatformVariants({
+    const result = await runWithWebModelAccess(body, () => adaptPlatformVariants({
       platforms,
       targets: session.targets,
       projectName: session.projectName,
       projectTopic,
       creationPreferences,
-    });
+      throwOnModelError: true,
+    }));
 
     if (!result.ok) {
       // 失败保留原版本，返回错误信息但不修改会话

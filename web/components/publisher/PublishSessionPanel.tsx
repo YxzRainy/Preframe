@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { readJsonResponse } from "../../lib/readJsonResponse";
+import { promptForModelConfig, withLocalModelConfig } from "../../lib/localModelConfig";
 import {
   PLATFORM_PUBLISH_PROFILES,
   PUBLISHER_PLATFORM_LABELS,
@@ -301,10 +302,11 @@ export function PublishSessionPanel({ session, onChanged, onToast }: PublishSess
       const res = await fetch(`/api/publisher/sessions/${encodeURIComponent(session.id)}/adapt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(withLocalModelConfig({})),
       });
-      const data = await readJsonResponse<{ success?: boolean; error?: string; data?: { adaptedPlatforms?: string[] } }>(res);
+      const data = await readJsonResponse<{ success?: boolean; error?: string; errorCode?: string; data?: { adaptedPlatforms?: string[] } }>(res);
       if (!data.success) {
+        promptForModelConfig(data.errorCode);
         onToast(data.error || "智能适配失败，已保留原版本", "error");
       } else {
         onToast(`已优化 ${data.data?.adaptedPlatforms?.length || 0} 个平台`);

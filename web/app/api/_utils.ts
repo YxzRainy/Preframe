@@ -3,14 +3,43 @@ import { recordDiagnostic } from "../../../src/services/diagnosticLog";
 
 export type ApiStage = "account-memory" | "config" | "generate" | "model" | "parse" | "write" | "read" | "refine" | "scan" | "workspace" | "project" | "task" | "idea" | "stage" | "publish" | "publisher" | "weather" | "media" | "feedback";
 
+export class RequestSecurityError extends Error {
+  readonly status = 403;
+  readonly code = "CROSS_ORIGIN_REQUEST";
+
+  constructor() {
+    super("拒绝跨来源请求。");
+    this.name = "RequestSecurityError";
+  }
+}
+
+export function assertSameOrigin(request: Request): void {
+  const origin = request.headers.get("origin");
+  if (!origin) return;
+
+  const requestUrl = new URL(request.url);
+  const allowedOrigins = new Set([requestUrl.origin]);
+  const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const host = forwardedHost || request.headers.get("host")?.trim();
+  const forwardedProtocol = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+  const protocol = forwardedProtocol === "http" || forwardedProtocol === "https" ? forwardedProtocol : requestUrl.protocol.slice(0, -1);
+  if (host) allowedOrigins.add(`${protocol}://${host}`);
+
+  if (!allowedOrigins.has(origin)) throw new RequestSecurityError();
+}
+
 export function apiError(error: unknown, stage: ApiStage, fallback: string, status = 400) {
   void recordDiagnostic(error, stage).catch(() => undefined);
+  const details = error && typeof error === "object" ? error as { status?: unknown; code?: unknown } : {};
+  const errorStatus = typeof details.status === "number" && details.status >= 400 && details.status <= 599 ? details.status : status;
+  const errorCode = typeof details.code === "string" ? details.code : undefined;
   return NextResponse.json({
     ok: false,
     success: false,
     error: error instanceof Error ? error.message : fallback,
+    errorCode,
     stage,
-  }, { status });
+  }, { status: errorStatus });
 }
 
 export async function readRequestJson(request: Request): Promise<Record<string, unknown>> {

@@ -25,6 +25,8 @@ interface NewTaskDrawerProps {
   notice?: string;
   noticeTitle?: string;
   modelConfigured: boolean;
+  modelStatusText?: string;
+  canConfigureModel?: boolean;
   modelStatusLoading?: boolean;
   draftSaved: boolean;
   modelConfigurationRequired?: boolean;
@@ -35,7 +37,7 @@ interface NewTaskDrawerProps {
   onClearDraft: () => void;
 }
 
-export function NewTaskDrawer({ open, form, loading, error, errorTitle = "生成失败", notice = "", noticeTitle = "已撤销生成", modelConfigured, modelStatusLoading = false, draftSaved, modelConfigurationRequired = false, onChange, onSubmit, onClose, onOpenModelConfig, onClearDraft }: NewTaskDrawerProps) {
+export function NewTaskDrawer({ open, form, loading, error, errorTitle = "生成失败", notice = "", noticeTitle = "已撤销生成", modelConfigured, modelStatusText, canConfigureModel = true, modelStatusLoading = false, draftSaved, modelConfigurationRequired = false, onChange, onSubmit, onClose, onOpenModelConfig, onClearDraft }: NewTaskDrawerProps) {
   return (
     <Modal
       open={open}
@@ -49,8 +51,8 @@ export function NewTaskDrawer({ open, form, loading, error, errorTitle = "生成
     >
       <form id="new-task-form" onSubmit={onSubmit} className="modal-form new-task-form">
         <section className={`create-model-status ${modelConfigured ? "is-ready" : "is-missing"}`} aria-live="polite">
-          <div><i /><span>{modelStatusLoading ? "正在检查生成服务" : modelConfigured ? "生成服务已就绪" : "需要配置生成服务"}</span></div>
-          {!modelConfigured && <button className="secondary-button subtle" type="button" onClick={onOpenModelConfig}>去配置</button>}
+          <div><i /><span>{modelStatusLoading ? "正在检查生成服务" : modelStatusText || (modelConfigured ? "生成服务已就绪" : "需要配置生成服务")}</span></div>
+          {!modelConfigured && canConfigureModel && <button className="secondary-button subtle" type="button" onClick={onOpenModelConfig}>去配置</button>}
         </section>
         <section className="create-idea-card">
           <label htmlFor="project-topic"><span>这次想做什么？ <b>*</b></span><textarea id="project-topic" autoFocus required rows={4} value={form.topic} onChange={(event) => onChange("topic", event.target.value)} placeholder="写下选题、观点、素材或一个模糊的想法…" /></label>

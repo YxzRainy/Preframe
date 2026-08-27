@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { ShotTask } from "../../src/types/shotTask";
 import type { FeedbackRevision, ShotActualOutcome, ShotActualRecord, ShootingFeedback } from "../../src/types/shootingFeedback";
 import { readJsonResponse } from "../lib/readJsonResponse";
+import { promptForModelConfig, withLocalModelConfig } from "../lib/localModelConfig";
 
 interface ShootingFeedbackPanelProps {
   slug: string;
@@ -137,10 +138,13 @@ export function ShootingFeedbackPanel({ slug, shotTasks, onChanged }: ShootingFe
       const res = await fetch(`/api/projects/${encodeURIComponent(slug)}/feedback/revise`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ feedbackId: draft.id }),
+        body: JSON.stringify(withLocalModelConfig({ feedbackId: draft.id })),
       });
-      const data = await readJsonResponse<{ revision?: FeedbackRevision; error?: string }>(res);
-      if (!res.ok || !data.revision) throw new Error(data.error || "下一版内容生成失败。");
+      const data = await readJsonResponse<{ revision?: FeedbackRevision; error?: string; errorCode?: string }>(res);
+      if (!res.ok || !data.revision) {
+        promptForModelConfig(data.errorCode);
+        throw new Error(data.error || "下一版内容生成失败。");
+      }
       setRevision(data.revision);
       setNotice("下一版脚本、分镜、拍摄清单和成片执行稿已生成，原文件未覆盖。");
     } catch (err) {

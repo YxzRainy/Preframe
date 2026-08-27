@@ -2,7 +2,7 @@
 
 「片策」是一套本地运行的短视频前期策划工作台。输入选题、平台、内容主体、内容领域与内容风格后，它通过 DeepSeek API 创建短视频内容项目，并生成 8 份前期策划包 Markdown。
 
-项目同时提供本地 CLI 和 Next.js 可视化工作台，不含登录、数据库、云端部署或 SaaS 功能。
+项目同时提供本地 CLI 和 Next.js 可视化工作台。应用本身不要求登录；多平台发布功能仍按目标平台要求授权对应账号。默认 DeepSeek API Key 只从服务端环境变量读取，用户也可以在自己的浏览器中保存个人 DeepSeek API Key。
 
 ## 环境要求
 
@@ -35,7 +35,7 @@ npm run build:web
 npm run web
 ```
 
-Web API Route 只在 Node.js 服务端读取 `.env` 并调用 DeepSeek，API Key 不会进入浏览器代码。Web 服务和素材目录必须位于同一台电脑，素材扫描框应填写服务端可访问的绝对路径。
+Web API Route 只在 Node.js 服务端读取默认 DeepSeek 配置并调用模型，部署者的默认 API Key 不会进入浏览器代码。当前 Web 端固定使用 `deepseek-v4-flash`。如果服务器默认模型未配置、额度不足或认证失败，页面会提示用户在模型设置中填写自己的 DeepSeek API Key；个人 Key 只保存在该浏览器的 `localStorage`，不会写入服务器数据库。Web 服务和素材目录必须位于同一台电脑时，素材扫描框应填写服务端可访问的绝对路径。
 
 ## 配置封面图片生成 API（可选）
 
@@ -69,14 +69,32 @@ cp .env.example .env
 
 ```env
 DEEPSEEK_API_KEY=你的DeepSeek_API_Key
-DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 DEEPSEEK_MODEL=deepseek-v4-flash
 ```
 
 - `DEEPSEEK_API_KEY` 必填，工具不会在代码或输出文件中保存它。
-- `DEEPSEEK_BASE_URL` 可选，默认值为 `https://api.deepseek.com`。
-- `DEEPSEEK_MODEL` 可选，默认值为 `deepseek-v4-flash`。可改为你的账号实际支持的 `deepseek-v4-pro` 或其他 OpenAI-compatible 模型名称。
+- `DEEPSEEK_BASE_URL` 可选，默认值为 `https://api.deepseek.com/v1`。
+- 当前 Web 端固定使用 `deepseek-v4-flash`；`DEEPSEEK_MODEL` 仅保留给本地 CLI 使用。
 - `.env` 已加入 `.gitignore`，不要将真实密钥提交到 Git。
+
+## 生产环境部署配置
+
+应用本身不需要 Supabase、注册或通用账号登录。生产部署时，在托管平台的服务端 Environment Variables 中配置：
+
+```env
+DEEPSEEK_API_KEY=你的生产默认_Key
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+DEEPSEEK_MODEL=deepseek-v4-flash
+```
+
+- Netlify 中应把 `DEEPSEEK_API_KEY` 配置为服务端环境变量，不要使用 `NEXT_PUBLIC_` 前缀。
+- 本地开发使用项目根目录 `.env` 中的同名变量。
+- Web 端当前只支持 DeepSeek Flash，不允许浏览器修改服务器默认 Key。
+- 服务器默认模型不可用时，用户可在模型设置中保存个人 Key。个人 Key 以明文保存在用户自己的浏览器 `localStorage`，并仅在模型请求时通过 HTTPS 发送给本站服务端代理。
+- 应只通过 HTTPS 部署，并配置合理的访问频率和费用告警，避免公开默认 Key 被无限消耗。
+- 多平台发布中的抖音等平台账号授权属于发布能力，不是片策应用登录，不应移除。
+- 反向代理或静态文件服务不得暴露 `.env`、`.piance/`、`output/` 和备份目录。
 
 如果 API Key 缺失、网络失败、API 报错、模型返回为空或输出无法解析，CLI 会显示对应错误，不会写入不完整的项目。
 
@@ -161,7 +179,6 @@ web/
 ## 后续可扩展方向
 
 - 增加 Next.js 可视化界面与任务进度
-- 支持更多 OpenAI-compatible 模型供应商
 - 增加模板、品牌语气与团队工作流
 - 接入视频理解，自动标注素材内容
 - 增加历史版本比较与导出格式

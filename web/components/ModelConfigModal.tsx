@@ -1,37 +1,24 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
+import {
+  clearLocalModelConfig,
+  maskLocalApiKey,
+  readLocalModelConfig,
+  saveLocalModelConfig,
+} from "../lib/localModelConfig";
+import { readJsonResponse } from "../lib/readJsonResponse";
 import { Modal } from "./Modal";
 
-type ModelProvider =
-  | "deepseek"
-  | "openai"
-  | "anthropic"
-  | "gemini"
-  | "moonshot"
-  | "qwen"
-  | "openrouter"
-  | "custom";
-
-type ModelThinkingMode = "disabled" | "low" | "high" | "max";
-
 interface PublicModelConfig {
-  provider: ModelProvider;
   providerLabel: string;
   baseURL: string;
   model: string;
   temperature: number;
   maxTokens: number;
-  thinkingMode: ModelThinkingMode;
-  maskedApiKey: string;
+  thinkingMode: "disabled" | "low" | "high" | "max";
   configured: boolean;
-  source: "file" | "env" | "default";
-}
-
-interface ProviderOption {
-  value: ModelProvider;
-  label: string;
-  defaults: Omit<PublicModelConfig, "providerLabel" | "maskedApiKey" | "configured" | "source">;
+  source: "env" | "default";
 }
 
 interface ModelConfigModalProps {
@@ -40,106 +27,50 @@ interface ModelConfigModalProps {
   onSaved?: (label: string) => void;
 }
 
-interface FormState {
-  provider: ModelProvider;
-  baseURL: string;
-  apiKey: string;
-  model: string;
-  temperature: string;
-  maxTokens: string;
-  thinkingMode: ModelThinkingMode;
-}
-
-const emptyConfig: FormState = {
-  provider: "deepseek",
-  baseURL: "https://api.deepseek.com/v1",
-  apiKey: "",
-  model: "deepseek-chat",
-  temperature: "0.7",
-  maxTokens: "4096",
-  thinkingMode: "low",
-};
-
-function labelFromConfig(config: PublicModelConfig): string {
-  return `${config.providerLabel} · ${config.model}`;
-}
-
-async function readApiJson<T>(response: Response): Promise<T> {
-  const contentType = response.headers.get("content-type") || "";
-  const raw = await response.text();
-  if (!contentType.toLowerCase().includes("application/json")) {
-    console.error("模型配置接口返回了非 JSON 内容，原始返回前 300 字符：", raw.slice(0, 300));
-    throw new Error("接口返回了非 JSON 内容，请检查服务端日志。");
-  }
-  return JSON.parse(raw) as T;
-}
-
 export function ModelConfigModal({ open, onClose, onSaved }: ModelConfigModalProps) {
-  const [form, setForm] = useState<FormState>(emptyConfig);
-  const [providers, setProviders] = useState<ProviderOption[]>([]);
-  const [current, setCurrent] = useState<PublicModelConfig | null>(null);
-  const [status, setStatus] = useState("未配置");
+  const [serverConfig, setServerConfig] = useState<PublicModelConfig | null>(null);
+  const [savedApiKey, setSavedApiKey] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [status, setStatus] = useState("读取中");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [testing, setTesting] = useState(false);
 
-  const providerMap = useMemo(() => new Map(providers.map((provider) => [provider.value, provider])), [providers]);
-
   async function loadConfig() {
-    const response = await fetch("/api/model-config");
-    const data = await readApiJson<{ success: boolean; config: PublicModelConfig; providers: ProviderOption[]; error?: string }>(response);
-    if (!response.ok || !data.success) throw new Error(data.error || "模型配置读取失败。");
-    setProviders(data.providers || []);
-    setCurrent(data.config);
-    setForm({
-      provider: data.config.provider,
-      baseURL: data.config.baseURL,
-      apiKey: "",
-      model: data.config.model,
-      temperature: String(data.config.temperature),
-      maxTokens: String(data.config.maxTokens),
-      thinkingMode: data.config.thinkingMode,
-    });
-    setStatus(data.config.configured ? "已配置" : "未配置");
-    setMessage(data.config.configured ? `当前使用：${labelFromConfig(data.config)}` : "未保存本地配置时，将继续使用 .env 或默认配置。");
+    const [response, localConfig] = await Promise.all([
+      fetch("/api/model-config", { cache: "no-store" }),
+      Promise.resolve(readLocalModelConfig()),
+    ]);
+    const data = await readJsonResponse<{ success?: boolean; config?: PublicModelConfig; error?: string }>(response);
+    if (!response.ok || !data.success || !data.config) throw new Error(data.error || "模型配置读取失败。");
+    setServerConfig(data.config);
+    setSavedApiKey(localConfig?.apiKey || "");
+    setApiKey("");
+    if (localConfig?.apiKey) {
+      setStatus("个人配置已启用");
+      setMessage("当前优先使用保存在这个浏览器中的 DeepSeek API Key。");
+    } else if (data.config.configured) {
+      setStatus("服务器模型可用");
+      setMessage("当前使用部署环境变量中的默认 DeepSeek Flash。");
+    } else {
+      setStatus("需要个人 API Key");
+      setMessage("服务器默认模型未配置或不可用时，请在这里保存自己的 DeepSeek API Key。");
+    }
   }
 
   useEffect(() => {
     if (!open) return;
+    setStatus("读取中");
     setMessage("");
     loadConfig().catch((error) => {
-      setStatus("连接失败");
+      setStatus("读取失败");
       setMessage(error instanceof Error ? error.message : "模型配置读取失败。");
     });
   }, [open]);
 
-  function update<K extends keyof FormState>(key: K, value: FormState[K]) {
-    setForm((currentForm) => ({ ...currentForm, [key]: value }));
-  }
-
-  function selectProvider(provider: ModelProvider) {
-    const preset = providerMap.get(provider);
-    setForm((currentForm) => ({
-      ...currentForm,
-      provider,
-      baseURL: preset?.defaults.baseURL || currentForm.baseURL,
-      model: preset?.defaults.model || currentForm.model,
-      temperature: String(preset?.defaults.temperature ?? currentForm.temperature),
-      maxTokens: String(preset?.defaults.maxTokens ?? currentForm.maxTokens),
-      thinkingMode: preset?.defaults.thinkingMode ?? currentForm.thinkingMode,
-    }));
-  }
-
-  function payload() {
-    return {
-      provider: form.provider,
-      baseURL: form.baseURL,
-      apiKey: form.apiKey.trim() || undefined,
-      model: form.model,
-      temperature: Number(form.temperature),
-      maxTokens: Number(form.maxTokens),
-      thinkingMode: form.thinkingMode,
-    };
+  function notifyUpdated(label: string) {
+    window.dispatchEvent(new CustomEvent("piance-model-config-updated", { detail: { modelLabel: label } }));
+    onSaved?.(label);
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -147,148 +78,101 @@ export function ModelConfigModal({ open, onClose, onSaved }: ModelConfigModalPro
     setBusy(true);
     setMessage("");
     try {
-      const response = await fetch("/api/model-config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload()),
-      });
-      const data = await readApiJson<{ success: boolean; config: PublicModelConfig; error?: string }>(response);
-      if (!response.ok || !data.success) throw new Error(data.error || "模型配置保存失败。");
-      setCurrent(data.config);
-      setForm((currentForm) => ({ ...currentForm, apiKey: "" }));
-      setStatus("已配置");
-      setMessage("配置已保存到本地。");
-      onSaved?.(labelFromConfig(data.config));
+      const config = saveLocalModelConfig(apiKey);
+      setSavedApiKey(config.apiKey);
+      setApiKey("");
+      setStatus("个人配置已启用");
+      setMessage("DeepSeek API Key 已保存在这个浏览器中，生成请求会优先使用它。");
+      notifyUpdated("DeepSeek · deepseek-v4-flash");
     } catch (error) {
-      setStatus("连接失败");
-      setMessage(error instanceof Error ? error.message : "模型配置保存失败。");
+      setStatus("保存失败");
+      setMessage(error instanceof Error ? error.message : "API Key 保存失败。");
     } finally {
       setBusy(false);
     }
   }
 
   async function testConnection() {
+    const testApiKey = apiKey.trim() || savedApiKey;
     setTesting(true);
     setMessage("");
     try {
       const response = await fetch("/api/model-config/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload()),
+        body: JSON.stringify(testApiKey ? { apiKey: testApiKey } : {}),
       });
-      const data = await readApiJson<{ success: boolean; message?: string; config?: PublicModelConfig; error?: string }>(response);
-      if (!response.ok || !data.success) throw new Error(data.error || "模型连接失败，请检查 API Key、Base URL 或模型名称。");
+      const data = await readJsonResponse<{ success?: boolean; message?: string; error?: string }>(response);
+      if (!response.ok || !data.success) throw new Error(data.error || "DeepSeek Flash 连接失败。");
       setStatus("连接成功");
-      setMessage(data.message || "连接成功");
+      setMessage(data.message || "DeepSeek Flash 连接成功。");
     } catch (error) {
       setStatus("连接失败");
-      setMessage(error instanceof Error ? error.message : "模型连接失败，请检查 API Key、Base URL 或模型名称。");
+      setMessage(error instanceof Error ? error.message : "DeepSeek Flash 连接失败。");
     } finally {
       setTesting(false);
     }
   }
 
-  async function restoreDefault() {
-    setBusy(true);
-    setMessage("");
-    try {
-      const response = await fetch("/api/model-config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reset: true }),
-      });
-      const data = await readApiJson<{ success: boolean; config: PublicModelConfig; error?: string }>(response);
-      if (!response.ok || !data.success) throw new Error(data.error || "恢复默认失败。");
-      setCurrent(data.config);
-      setForm({
-        provider: data.config.provider,
-        baseURL: data.config.baseURL,
-        apiKey: "",
-        model: data.config.model,
-        temperature: String(data.config.temperature),
-        maxTokens: String(data.config.maxTokens),
-        thinkingMode: data.config.thinkingMode,
-      });
-      setStatus(data.config.configured ? "已配置" : "未配置");
-      setMessage("已恢复为 .env / DeepSeek 默认读取方式。");
-      onSaved?.(labelFromConfig(data.config));
-    } catch (error) {
-      setStatus("连接失败");
-      setMessage(error instanceof Error ? error.message : "恢复默认失败。");
-    } finally {
-      setBusy(false);
+  function restoreDefault() {
+    clearLocalModelConfig();
+    setSavedApiKey("");
+    setApiKey("");
+    if (serverConfig?.configured) {
+      setStatus("服务器模型可用");
+      setMessage("已清除浏览器中的个人 Key，恢复使用服务器默认 DeepSeek Flash。");
+    } else {
+      setStatus("需要个人 API Key");
+      setMessage("已清除浏览器中的个人 Key；当前服务器默认模型不可用。");
     }
+    notifyUpdated("DeepSeek · deepseek-v4-flash");
   }
+
+  const effectiveConfigured = Boolean(savedApiKey || serverConfig?.configured);
+  const sourceLabel = savedApiKey ? "当前浏览器" : serverConfig?.configured ? "服务器环境变量" : "未配置";
 
   return (
     <Modal
       open={open}
-      title="模型配置"
-      description="配置用于生成策划文档的大模型服务"
+      title="DeepSeek Flash 配置"
+      description="服务器默认模型不可用时，可使用你自己的 DeepSeek API Key"
       onClose={onClose}
       size="lg"
       closeDisabled={busy || testing}
       footer={(
         <>
-          <button type="button" className="secondary-button" onClick={restoreDefault} disabled={busy || testing}>恢复默认</button>
-          <button type="button" className="secondary-button" onClick={testConnection} disabled={busy || testing}>{testing ? "测试中" : "测试连接"}</button>
-          <button type="submit" form="model-config-form" className="primary-button" disabled={busy || testing}>{busy ? "保存中" : "保存配置"}</button>
+          <button type="button" className="secondary-button" onClick={restoreDefault} disabled={busy || testing || !savedApiKey}>清除个人 Key</button>
+          <button type="button" className="secondary-button" onClick={testConnection} disabled={busy || testing || (!apiKey.trim() && !savedApiKey && !serverConfig?.configured)}>{testing ? "测试中" : "测试连接"}</button>
+          <button type="submit" form="model-config-form" className="primary-button" disabled={busy || testing || !apiKey.trim()}>{busy ? "保存中" : "保存到浏览器"}</button>
         </>
       )}
     >
       <form id="model-config-form" className="modal-form model-config-form" onSubmit={save}>
         <section className="model-config-status">
           <div>
-            <span className={`model-config-state state-${status === "连接成功" ? "success" : status === "连接失败" ? "error" : current?.configured ? "ready" : "muted"}`}>{status}</span>
-            <strong>{current ? labelFromConfig(current) : "读取中"}</strong>
-            <p>{message || "API Key 仅保存在本机 .piance/model-config.json，不会写入项目文档。"}</p>
+            <span className={`model-config-state state-${status === "连接成功" || effectiveConfigured ? "success" : status.includes("失败") ? "error" : "muted"}`}>{status}</span>
+            <strong>DeepSeek · deepseek-v4-flash</strong>
+            <p>{message || "API Key 只保存在当前浏览器的 localStorage 中，不会保存到服务器数据库。"}</p>
           </div>
           <dl>
-            <div><dt>配置来源</dt><dd>{current?.source === "file" ? "本地文件" : current?.source === "env" ? ".env" : "默认"}</dd></div>
-            <div><dt>API Key</dt><dd>{current?.maskedApiKey || "未配置"}</dd></div>
+            <div><dt>配置来源</dt><dd>{sourceLabel}</dd></div>
+            <div><dt>个人 API Key</dt><dd>{savedApiKey ? maskLocalApiKey(savedApiKey) : "未配置"}</dd></div>
           </dl>
         </section>
 
         <label>
-          <span>服务商</span>
-          <select value={form.provider} onChange={(event) => selectProvider(event.target.value as ModelProvider)}>
-            {providers.map((provider) => <option key={provider.value} value={provider.value}>{provider.label}</option>)}
-          </select>
+          <span>模型</span>
+          <input value="deepseek-v4-flash" readOnly />
         </label>
         <label>
-          <span>Base URL</span>
-          <input required value={form.baseURL} onChange={(event) => update("baseURL", event.target.value)} placeholder="https://api.deepseek.com/v1" />
+          <span>API 地址</span>
+          <input value="https://api.deepseek.com/v1" readOnly />
         </label>
         <label>
-          <span>API Key</span>
-          <input value={form.apiKey} onChange={(event) => update("apiKey", event.target.value)} placeholder={current?.maskedApiKey ? `保持当前：${current.maskedApiKey}` : "sk-..."} type="password" autoComplete="off" />
-          <small>留空会保留已保存的本地密钥；接口不会把完整 API Key 返回到页面。</small>
+          <span>你的 DeepSeek API Key</span>
+          <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={savedApiKey ? `当前：${maskLocalApiKey(savedApiKey)}` : "sk-..."} type="password" autoComplete="off" />
+          <small>保存后仅当前浏览器可读取；调用模型时会通过 HTTPS 发送给本站服务端代理。</small>
         </label>
-        <label>
-          <span>模型名称</span>
-          <input required value={form.model} onChange={(event) => update("model", event.target.value)} placeholder="deepseek-chat" />
-        </label>
-        <div className="model-config-grid">
-          <label>
-            <span>Temperature</span>
-            <input required min="0" max="2" step="0.1" type="number" value={form.temperature} onChange={(event) => update("temperature", event.target.value)} />
-          </label>
-          <label>
-            <span>Max Tokens</span>
-            <input required min="256" step="256" type="number" value={form.maxTokens} onChange={(event) => update("maxTokens", event.target.value)} />
-          </label>
-          {form.provider === "deepseek" && (
-            <label>
-              <span>思考强度</span>
-              <select value={form.thinkingMode} onChange={(event) => update("thinkingMode", event.target.value as ModelThinkingMode)}>
-                <option value="disabled">关闭</option>
-                <option value="low">Low</option>
-                <option value="high">High</option>
-                <option value="max">Max</option>
-              </select>
-            </label>
-          )}
-        </div>
       </form>
     </Modal>
   );

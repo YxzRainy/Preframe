@@ -1,7 +1,7 @@
 # Preframe 项目交接文档
 
-> 生成日期：2026-08-10  
-> 用途：供其他 agent / 工程师快速接手本项目。所有内容均基于当前代码库真实文件，未运行构建。  
+> 生成日期：2026-08-10
+> 用途：供其他 agent / 工程师快速接手本项目。所有内容均基于当前代码库真实文件，未运行构建。
 > 项目根目录：`/Users/YxzRainy/Documents/Vibecoding/Preframe`
 
 ---
@@ -254,7 +254,7 @@ API 共用工具：[web/app/api/_utils.ts](file:///Users/YxzRainy/Documents/Vibe
 
 | 分组 | 组件 | 用途 |
 | --- | --- | --- |
-| 通用 | TopBar、Modal、StatusBadge、VisualSurface、MarkdownPreview、ModelStatusBadge、AuthButton、GenerationProgressModal、AccountMemoryModal、CreatorProfileModal、ModelConfigModal、AppSidebar | 基础 UI 与弹窗 |
+| 通用 | TopBar、Modal、StatusBadge、VisualSurface、MarkdownPreview、ModelStatusBadge、GenerationProgressModal、AccountMemoryModal、CreatorProfileModal、ModelConfigModal、AppSidebar | 基础 UI 与弹窗 |
 | 首页生成 | GenerateWorkspace、NewTaskDrawer、ProjectSidebar、AutomationProgress、ResultTabs、ContentModuleCard、HomeAgentConsole、AgentToolsPanel、DocumentWorkspace | 选题 → 8 文档生成与展示 |
 | 仪表盘 | dashboard/DashboardWorkspace、DashboardHeader、ContentPipeline、CurrentProjects、RecentProjects、TodayFocus、QuickActions、TaskList、MoodPanel、MoodCompact、types | 仪表盘整体 |
 | 项目详情 | ProjectDetailView、ProjectList、project/StagePanel、project/PublishPanel | 项目详情与阶段/发布面板 |

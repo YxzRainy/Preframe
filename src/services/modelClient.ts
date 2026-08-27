@@ -1,7 +1,5 @@
 import "dotenv/config";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { writeJsonAtomicPath } from "./atomicJson.js";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 export type ModelProvider =
   | "deepseek"
@@ -35,7 +33,7 @@ export interface PublicModelConfig {
   thinkingMode: ModelThinkingMode;
   maskedApiKey: string;
   configured: boolean;
-  source: "file" | "env" | "default";
+  source: "env" | "default" | "request";
 }
 
 export type ModelFailureKind = "timeout" | "rate_limit" | "server" | "length" | "auth" | "config" | "cancelled" | "unknown";
@@ -50,6 +48,16 @@ export interface ModelResponseMetrics {
 export interface CallModelOptions {
   signal?: AbortSignal;
   onMetrics?: (metrics: ModelResponseMetrics) => void;
+}
+
+type ModelConfigSource = "env" | "default" | "request";
+
+// Web requests use AsyncLocalStorage so concurrent browser requests never share
+// a mutable process-global model configuration. CLI calls keep their normal loader.
+const scopedModelConfig = new AsyncLocalStorage<ModelConfig>();
+
+export function withModelConfig<T>(config: ModelConfig, task: () => Promise<T>): Promise<T> {
+  return scopedModelConfig.run(config, task);
 }
 
 interface ChatCompletionResponse {
@@ -98,8 +106,6 @@ export function modelFailureKind(error: unknown): ModelFailureKind {
   return "unknown";
 }
 
-const CONFIG_DIR = ".piance";
-const CONFIG_FILE = "model-config.json";
 
 const PROVIDER_LABELS: Record<ModelProvider, string> = {
   deepseek: "DeepSeek",
@@ -138,14 +144,6 @@ function failureKindForStatus(status: number): ModelFailureKind {
   return "unknown";
 }
 
-function repoRoot(): string {
-  return process.cwd();
-}
-
-export function modelConfigPath(): string {
-  return path.join(repoRoot(), CONFIG_DIR, CONFIG_FILE);
-}
-
 function isProvider(value: unknown): value is ModelProvider {
   return typeof value === "string" && value in PROVIDER_DEFAULTS;
 }
@@ -162,18 +160,6 @@ function stringSetting(value: unknown, fallback: string): string {
 
 function thinkingModeSetting(value: unknown, fallback: ModelThinkingMode): ModelThinkingMode {
   return value === "disabled" || value === "low" || value === "high" || value === "max" ? value : fallback;
-}
-
-export function providerDefaults(provider: ModelProvider): Omit<ModelConfig, "apiKey"> {
-  return { ...PROVIDER_DEFAULTS[provider] };
-}
-
-export function providerOptions() {
-  return (Object.keys(PROVIDER_DEFAULTS) as ModelProvider[]).map((provider) => ({
-    value: provider,
-    label: PROVIDER_LABELS[provider],
-    defaults: providerDefaults(provider),
-  }));
 }
 
 function normalizeConfig(value: Record<string, unknown>, existingApiKey = ""): ModelConfig {
@@ -215,24 +201,16 @@ export function validateModelConfigInput(input: Record<string, unknown>, existin
   validateConfig(normalizeConfig(input, existingApiKey));
 }
 
+export function modelConfigFromInput(input: Record<string, unknown>, existingApiKey = ""): ModelConfig {
+  validateModelConfigInput(input, existingApiKey);
+  return normalizeConfig(input, existingApiKey);
+}
+
 export function maskApiKey(apiKey: string): string {
   const trimmed = apiKey.trim();
   if (!trimmed) return "";
   if (trimmed.length <= 10) return `${trimmed.slice(0, 2)}••••${trimmed.slice(-2)}`;
   return `${trimmed.slice(0, 6)}••••••${trimmed.slice(-4)}`;
-}
-
-async function readFileConfig(): Promise<ModelConfig | null> {
-  try {
-    const parsed: unknown = JSON.parse(await readFile(modelConfigPath(), "utf8"));
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const config = normalizeConfig(parsed as Record<string, unknown>);
-    validateConfig(config);
-    return config;
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "ENOENT") return null;
-    throw error;
-  }
 }
 
 function envConfig(): ModelConfig | null {
@@ -257,29 +235,19 @@ function defaultConfig(): ModelConfig {
   return { ...PROVIDER_DEFAULTS.deepseek, apiKey: process.env.DEEPSEEK_API_KEY?.trim() || "" };
 }
 
-export async function loadModelConfig(): Promise<ModelConfig & { source: "file" | "env" | "default" }> {
-  const fileConfig = await readFileConfig();
-  if (fileConfig) return { ...fileConfig, source: "file" };
+export async function loadDefaultModelConfig(): Promise<ModelConfig & { source: "env" | "default" }> {
   const fromEnv = envConfig();
   if (fromEnv) return { ...fromEnv, source: "env" };
   return { ...defaultConfig(), source: "default" };
 }
 
-export async function saveModelConfig(input: Record<string, unknown>): Promise<PublicModelConfig> {
-  const existing = await readFileConfig().catch(() => null);
-  validateModelConfigInput(input, existing?.apiKey || "");
-  const config = normalizeConfig(input, existing?.apiKey || "");
-  validateConfig(config);
-  await writeJsonAtomicPath(modelConfigPath(), config);
-  return publicModelConfig({ ...config, source: "file" }, true);
+export async function loadModelConfig(): Promise<ModelConfig & { source: ModelConfigSource }> {
+  const scoped = scopedModelConfig.getStore();
+  if (scoped) return { ...scoped, source: "request" };
+  return loadDefaultModelConfig();
 }
 
-export async function resetModelConfig(): Promise<PublicModelConfig> {
-  await rm(modelConfigPath(), { force: true });
-  return publicModelConfig(await loadModelConfig());
-}
-
-export function publicModelConfig(config: ModelConfig & { source: "file" | "env" | "default" }, forceConfigured?: boolean): PublicModelConfig {
+export function publicModelConfig(config: ModelConfig & { source: ModelConfigSource }, forceConfigured?: boolean): PublicModelConfig {
   return {
     provider: config.provider,
     providerLabel: PROVIDER_LABELS[config.provider],
@@ -522,11 +490,11 @@ export async function callModel(prompt: string, options: CallModelOptions = {}):
   return callChatModel(prompt, options);
 }
 
-export async function testModelConnection(configInput?: Record<string, unknown>): Promise<{ ok: true; message: string; config: PublicModelConfig }> {
-  const existing = (await readFileConfig().catch(() => null))?.apiKey || "";
+export async function testModelConnection(configInput?: Record<string, unknown>, existingApiKey = ""): Promise<{ ok: true; message: string; config: PublicModelConfig }> {
+  const existing = existingApiKey;
   if (configInput) validateModelConfigInput(configInput, existing);
   const config = configInput
-    ? { ...normalizeConfig(configInput, existing), source: "file" as const }
+    ? { ...normalizeConfig(configInput, existing), source: "request" as const }
     : await loadModelConfig();
   validateConfig(config);
   try {
@@ -536,8 +504,4 @@ export async function testModelConnection(configInput?: Record<string, unknown>)
     const detail = error instanceof Error ? error.message : String(error);
     throw new ModelClientError(sanitizeModelError(detail), { cause: error });
   }
-}
-
-export async function currentPublicModelConfig(): Promise<PublicModelConfig> {
-  return publicModelConfig(await loadModelConfig());
 }

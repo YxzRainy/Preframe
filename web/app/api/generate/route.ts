@@ -14,8 +14,8 @@ import { PROJECT_DOCUMENT_DEFINITIONS } from "../../../../src/utils/documentDefi
 import { formatDuration } from "../../../../src/utils/generationTiming";
 import type { GenerationModelCallRecord } from "../../../../src/services/documentGeneration";
 import { markIdeaConverted } from "../../../../src/services/ideaManager";
-import { consumeFreeTrial, getTrialStatus } from "../../../lib/supabase/trial";
-import { readRequestJson } from "../_utils";
+import { runWithWebModelAccess } from "../../../lib/model-access";
+import { assertSameOrigin, readRequestJson } from "../_utils";
 
 export const runtime = "nodejs";
 
@@ -42,17 +42,8 @@ interface GenerationJobSnapshot {
 }
 
 const jobs = new Map<string, GenerationJobSnapshot>();
-const ipWindows = new Map<string, { minuteStartedAt: number; minuteCount: number; dayStartedAt: number; dayCount: number }>();
-const userWindows = new Map<string, { dayStartedAt: number; dayCount: number }>();
 
 type ApiErrorStage = "generate" | "model" | "parse" | "write";
-
-class ApiGateError extends Error {
-  constructor(message: string, public readonly status: number, public readonly code: string) {
-    super(message);
-    this.name = "ApiGateError";
-  }
-}
 
 function initialGenerationProgress(): GenerationDocumentProgress[] {
   return PROJECT_DOCUMENT_DEFINITIONS.map((definition) => ({
@@ -165,6 +156,9 @@ async function waitIfPaused(job: GenerationJobSnapshot): Promise<void> {
 
 function jsonError(error: unknown, stage: ApiErrorStage, status = 400, job?: GenerationJobSnapshot) {
   const message = error instanceof Error ? error.message : String(error || "生成失败。");
+  const details = error && typeof error === "object" ? error as { status?: unknown; code?: unknown } : {};
+  const errorStatus = typeof details.status === "number" && details.status >= 400 && details.status <= 599 ? details.status : status;
+  const errorCode = typeof details.code === "string" ? details.code : undefined;
   if (job) {
     failActiveDocuments(job, message);
     finishJob(job);
@@ -174,65 +168,10 @@ function jsonError(error: unknown, stage: ApiErrorStage, status = 400, job?: Gen
     ok: false,
     success: false,
     error: message,
-    errorCode: error instanceof ApiGateError ? error.code : undefined,
+    errorCode,
     stage,
     job: job ? publicJob(job) : undefined,
-  }, { status });
-}
-
-function clientIp(request: Request): string {
-  const forwardedFor = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwardedFor || request.headers.get("x-real-ip") || "unknown";
-}
-
-function assertRateLimit(request: Request, userId: string): void {
-  const now = Date.now();
-  const ip = clientIp(request);
-  const minuteMs = 60_000;
-  const dayMs = 24 * 60 * 60_000;
-  const ipWindow = ipWindows.get(ip) || { minuteStartedAt: now, minuteCount: 0, dayStartedAt: now, dayCount: 0 };
-  if (now - ipWindow.minuteStartedAt > minuteMs) {
-    ipWindow.minuteStartedAt = now;
-    ipWindow.minuteCount = 0;
-  }
-  if (now - ipWindow.dayStartedAt > dayMs) {
-    ipWindow.dayStartedAt = now;
-    ipWindow.dayCount = 0;
-  }
-  ipWindow.minuteCount += 1;
-  ipWindow.dayCount += 1;
-  ipWindows.set(ip, ipWindow);
-
-  const userWindow = userWindows.get(userId) || { dayStartedAt: now, dayCount: 0 };
-  if (now - userWindow.dayStartedAt > dayMs) {
-    userWindow.dayStartedAt = now;
-    userWindow.dayCount = 0;
-  }
-  userWindow.dayCount += 1;
-  userWindows.set(userId, userWindow);
-
-  if (ipWindow.minuteCount > 6) throw new ApiGateError("请求过于频繁，请稍后再试。", 429, "RATE_LIMITED");
-  if (ipWindow.dayCount > 30 || userWindow.dayCount > 12) throw new ApiGateError("今日免费体验请求过多，请明天再试或配置自己的模型 API。", 429, "RATE_LIMITED");
-}
-
-async function authorizeGeneration(request: Request): Promise<void> {
-  const status = await getTrialStatus();
-  if (status.canUseCustomModel) return;
-  if (!status.serverModelAvailable) throw new ApiGateError("服务器模型不可用，请先在设置中心配置自己的模型 API。", 503, "MODEL_UNAVAILABLE");
-  if (!status.supabaseConfigured || !status.adminConfigured) throw new ApiGateError("免费体验服务未配置，请先配置 Supabase Auth。", 503, "TRIAL_UNAVAILABLE");
-  if (!status.authenticated || !status.userId) throw new ApiGateError("请先登录后再使用免费体验生成。", 401, "LOGIN_REQUIRED");
-  if (status.freeTrialRemaining <= 0) throw new ApiGateError("免费体验次数已用完，请在设置中心配置自己的模型 API。", 402, "TRIAL_EXHAUSTED");
-
-  assertRateLimit(request, status.userId);
-  try {
-    await consumeFreeTrial(status.userId);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (/exhausted|用完|limit/i.test(message)) {
-      throw new ApiGateError("免费体验次数已用完，请在设置中心配置自己的模型 API。", 402, "TRIAL_EXHAUSTED");
-    }
-    throw new ApiGateError("免费体验扣次失败，请稍后再试。", 500, "TRIAL_CONSUME_FAILED");
-  }
+  }, { status: errorStatus });
 }
 
 export async function GET(request: Request) {
@@ -311,6 +250,7 @@ export async function POST(request: Request) {
   let job: GenerationJobSnapshot | undefined;
   let sourceIdeaId = "";
   try {
+    assertSameOrigin(request);
     const body = await readRequestJson(request);
     const jobId = jobIdFrom(body.jobId);
     job = createJob(jobId);
@@ -339,26 +279,26 @@ export async function POST(request: Request) {
       targetAudience: optional(body.targetUser, "对该选题感兴趣的人"),
       extraRequirements: typeof body.extra === "string" ? body.extra.trim() : "",
     };
-    await authorizeGeneration(request);
-    const result = await generateProject(input, {
+    const activeJob = job;
+    const result = await runWithWebModelAccess(body, () => generateProject(input, {
       jobId,
-      generationStartedAt: job.startedAt,
-      signal: job.abortController.signal,
-      isCancelled: () => Boolean(job?.cancelled),
-      waitIfPaused: () => job ? waitIfPaused(job) : Promise.resolve(),
+      generationStartedAt: activeJob.startedAt,
+      signal: activeJob.abortController.signal,
+      isCancelled: () => activeJob.cancelled,
+      waitIfPaused: () => waitIfPaused(activeJob),
       onTempDir: (tempDir) => {
-        if (job) job.tempDir = tempDir;
+        activeJob.tempDir = tempDir;
       },
       onStatus: (update) => {
-        if (job) updateJob(job, update);
+        updateJob(activeJob, update);
       },
       onTiming: (label, durationMs) => {
-        job?.timings.push({ label, durationMs });
+        activeJob.timings.push({ label, durationMs });
       },
       onModelCall: (record) => {
-        job?.modelCalls.push(record);
+        activeJob.modelCalls.push(record);
       },
-    });
+    }));
     if (job.cancelled) throw new GenerationCancelledError();
     if (sourceIdeaId) {
       try {
@@ -387,9 +327,6 @@ export async function POST(request: Request) {
     }
     if (error instanceof GenerationStageError) {
       return jsonError(error, error.stage, 400, job);
-    }
-    if (error instanceof ApiGateError) {
-      return jsonError(error, "generate", error.status, job);
     }
     return jsonError(error, "generate", 400, job);
   }

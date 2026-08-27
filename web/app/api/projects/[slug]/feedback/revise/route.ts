@@ -6,7 +6,8 @@ import { parseModelJsonObject } from "../../../../../../../src/utils/modelJson";
 import { validateDocument } from "../../../../../../../src/services/documentGeneration";
 import { PROJECT_DOCUMENT_DEFINITIONS } from "../../../../../../../src/utils/documentDefinitions";
 import { callModel } from "../../../../../../../src/services/modelClient";
-import { apiError, readRequestJson } from "../../../../_utils";
+import { apiError, assertSameOrigin, readRequestJson } from "../../../../_utils";
+import { runWithWebModelAccess } from "../../../../../../lib/model-access";
 
 export const runtime = "nodejs";
 
@@ -45,6 +46,7 @@ function validateOutput(files: Array<{ filename: string; content: string }>, met
 
 export async function POST(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   try {
+    assertSameOrigin(request);
     const { slug } = await params;
     const body = await readRequestJson(request);
     const project = await readProject(slug);
@@ -57,7 +59,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     const input = projectInput(metadata, slug);
     const feedbackText = [feedback.title, feedback.overallNote, feedback.scriptAdjustments, feedback.storyboardAdjustments, feedback.checklistAdjustments].filter(Boolean).join("\n") + "\n" + JSON.stringify(feedback);
     const strategy = typeof metadata.shootingStrategy === "object" && metadata.shootingStrategy ? JSON.stringify(metadata.shootingStrategy) : "";
-    let raw = await callModel(buildFeedbackRevisionPrompt(input, sourceFiles, feedbackText, strategy));
+    let raw = await runWithWebModelAccess(body, () => callModel(buildFeedbackRevisionPrompt(input, sourceFiles, feedbackText, strategy)));
     let files: Array<{ filename: string; content: string }>;
     let errors: string[] = [];
     try {
@@ -66,7 +68,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
       if (errors.length) throw new Error(errors.join("；"));
     } catch (firstError) {
       errors = [firstError instanceof Error ? firstError.message : "修订包解析失败"];
-      raw = await callModel(buildFeedbackRevisionRepairPrompt(raw, errors));
+      raw = await runWithWebModelAccess(body, () => callModel(buildFeedbackRevisionRepairPrompt(raw, errors)));
       files = readOutput(raw);
       errors = validateOutput(files, metadata, slug);
       if (errors.length) throw new Error(`修订包未通过质量校验：${errors.join("；")}`);

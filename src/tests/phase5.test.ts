@@ -63,25 +63,19 @@ test("回收站支持列表与冲突安全恢复", async () => {
   assert.equal((await listTrashProjects()).some((item) => item.id === trashed!.id), false);
 });
 
-test("配置备份不导出明文密钥，恢复时保留本机密钥", async () => {
+test("配置备份排除旧模型配置文件，只恢复本地非密钥设置", async () => {
   await mkdir(dataDir, { recursive: true });
-  await writeFile(path.join(dataDir, "model-config.json"), `${JSON.stringify({ provider: "deepseek", baseURL: "https://api.deepseek.com/v1", apiKey: "sk-local-secret-123456", model: "deepseek-chat", temperature: 0.7, maxTokens: 4096 })}\n`, "utf8");
+  await writeFile(path.join(dataDir, "model-config.json"), `${JSON.stringify({ apiKey: "sk-legacy-secret-123456" })}\n`, "utf8");
   await writeFile(path.join(dataDir, "ideas.json"), "{\"items\":[{\"title\":\"备份前\"}]}\n", "utf8");
   const backup = await createConfigBackup();
-  const serialized = JSON.stringify(backup);
-  assert.doesNotMatch(serialized, /sk-local-secret/u);
-  const modelConfigFile = backup.files.find((file) => file.path === "model-config.json");
-  assert.ok(modelConfigFile);
-  assert.match(Buffer.from(modelConfigFile!.contentBase64, "base64").toString("utf8"), /__PREFRAME_REDACTED__/u);
+  assert.doesNotMatch(JSON.stringify(backup), /sk-legacy-secret/u);
+  assert.equal(backup.files.some((file) => file.path === "model-config.json"), false);
 
   await writeFile(path.join(dataDir, "ideas.json"), "{\"items\":[]}\n", "utf8");
+  await rm(path.join(dataDir, "model-config.json"));
   const restored = await restoreConfigBackup(backup);
   assert.ok(await readFile(restored.rollbackBackupPath, "utf8"));
   assert.match(await readFile(path.join(dataDir, "ideas.json"), "utf8"), /备份前/u);
-  assert.match(await readFile(path.join(dataDir, "model-config.json"), "utf8"), /sk-local-secret-123456/u);
-
-  await rm(path.join(dataDir, "model-config.json"));
-  await restoreConfigBackup(backup);
   await assert.rejects(readFile(path.join(dataDir, "model-config.json"), "utf8"), { code: "ENOENT" });
 });
 

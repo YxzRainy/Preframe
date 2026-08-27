@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import { List, MoonStars, Sun } from "@phosphor-icons/react";
 import { StatusBadge } from "./StatusBadge";
 import { Modal } from "./Modal";
-import { AuthButton } from "./AuthButton";
 import { isPrimaryProjectDocument } from "../../src/utils/documentDefinitions";
 import { readJsonResponse } from "../lib/readJsonResponse";
 
@@ -171,7 +170,6 @@ export function TopBar({ initialProfile }: TopBarProps) {
           {theme === "dark" ? <Sun size={17} weight="duotone" /> : <MoonStars size={17} weight="duotone" />}
         </button>
       </div>
-      <AuthButton />
       <div className="creator-entry" aria-label="创作者资料" onClick={() => window.dispatchEvent(new Event("piance-open-sidebar"))}>
         <span className="creator-avatar">{showAvatarImage ? <img src={avatarSrc} alt={`${profile.name}的头像`} onError={() => setAvatarFailed(true)} /> : <i />}</span>
         <div><strong>{profile.name}</strong></div>

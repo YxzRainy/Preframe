@@ -188,7 +188,6 @@ TopBar（顶部）
 | | `/api/profile/avatar` | GET | 头像 |
 | | `/api/account-memory` | GET/POST | 账号记忆 |
 | | `/api/config` | GET | 前端配置 |
-| **其他** | `/api/auth/status` | GET | 认证状态 |
 | | `/api/weather` | GET | 天气查询 |
 
 ---
@@ -688,7 +687,7 @@ DashboardWorkspace.tsx 渲染
 | 多用户数据隔离 | ❌ 严重 | 所有项目存储在同一 output/ 目录，无用户分区 |
 | 监控告警 | ❌ 严重 | 无日志收集、无错误监控、无性能指标 |
 | 数据备份 | ❌ 严重 | 文件系统存储，无自动备份机制 |
-| API 认证 | ⚠️ 基础 | 有 `/api/auth/status`，但多数 API 无鉴权 |
+| API 请求安全 | ⚠️ 基础 | 应用无需通用登录；模型写操作执行同源校验，发布平台账号单独授权 |
 | 配额精细化 | ⚠️ 基础 | 仅 free_trial 次数限制，无 token 级配额 |
 | 并发控制 | ⚠️ 基础 | 生成任务用内存 Map，无分布式锁 |
 | 错误恢复 | ❌ 严重 | 进程崩溃后 .tmp 残留、jobs Map 丢失，无法恢复 |
