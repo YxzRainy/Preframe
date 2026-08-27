@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import {
-  CheckSquare,
   Database,
   FolderOpen,
   GearSix,
@@ -45,7 +44,6 @@ const NAV_ITEMS: readonly NavItem[] = [
   { href: "/projects", label: "项目库", icon: <FolderOpen size={19} weight="duotone" /> },
   { href: "/publish", label: "发布中心", icon: <PaperPlaneTilt size={19} weight="duotone" /> },
   { href: "/ideas", label: "灵感", icon: <Lightbulb size={19} weight="duotone" /> },
-  { href: "/tasks", label: "待办", icon: <CheckSquare size={19} weight="duotone" /> },
 ];
 
 type SettingsTab = "model" | "memory" | "profile" | "workspace" | "maintenance" | "appearance";
@@ -156,7 +154,6 @@ export function AppSidebar({ initialWorkspace }: AppSidebarProps) {
     if (pathname === "/" ) return "/";
     if (pathname === "/publish" || pathname.startsWith("/publish/")) return "/publish";
     if (pathname === "/ideas" || pathname.startsWith("/ideas/")) return "/ideas";
-    if (pathname === "/tasks" || pathname.startsWith("/tasks/")) return "/tasks";
     if (pathname === "/projects" || pathname.startsWith("/projects/")) return "/projects";
     return "/";
   }, [pathname]);

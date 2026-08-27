@@ -2,7 +2,13 @@ import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import type { GenerateInput } from "../prompts/generatePrompt.js";
-import { executionContext, executionDocumentInstructions } from "../prompts/enhancePrompt.js";
+import {
+  executionContext,
+  executionDocumentInstructions,
+  productionContext,
+  qualityReviewContext,
+  QUALITY_REVIEW_CONTEXT_FILES,
+} from "../prompts/enhancePrompt.js";
 import { CORE_PROJECT_DOCUMENT_DEFINITIONS, PROJECT_DOCUMENT_DEFINITIONS } from "../utils/documentDefinitions.js";
 import {
   buildRefinePrompt,
@@ -12,7 +18,7 @@ import {
 } from "../prompts/refinePrompt.js";
 import { scanAssets, assetsToMarkdown } from "./assetScanner.js";
 import { writeJson, writeMarkdown } from "./fileWriter.js";
-import { callModel, loadModelConfig } from "./modelClient.js";
+import { callModel, combineModelRequestSignal, loadModelConfig } from "./modelClient.js";
 import { generateImage, type CoverRatio } from "./imageClient.js";
 import {
   accountMemoryHasContent,
@@ -39,6 +45,7 @@ import {
   type DocumentQualityStatus,
   type DocumentState,
   type DocumentStatusRecord,
+  type GenerationModelCallRecord,
   type GeneratedDocumentResult,
 } from "./documentGeneration.js";
 import { syncProjectDerivedState } from "./projectLifecycle.js";
@@ -54,6 +61,11 @@ export interface GenerateResult {
   projectSlug: string;
   projectName: string;
   files: ContentFile[];
+  status: "complete" | "partial" | "failed";
+  documentsStatus: Record<string, DocumentStatusRecord>;
+  failedDocuments: Array<{ id: string; fileName: string; validationErrors: string[] }>;
+  modelCalls: GenerationModelCallRecord[];
+  deadlineReached: boolean;
 }
 
 export type GenerationJobStatus =
@@ -64,6 +76,7 @@ export type GenerationJobStatus =
   | "generatingPublishCopy"
   | "writing"
   | "paused"
+  | "partial"
   | "completed"
   | "cancelled"
   | "failed";
@@ -96,28 +109,16 @@ export interface GenerateProjectOptions {
   isCancelled?: () => boolean;
   waitIfPaused?: () => Promise<void>;
   onTiming?: (label: string, durationMs: number) => void;
+  onModelCall?: (record: GenerationModelCallRecord) => void;
+  deadlineMs?: number;
 }
+
+export const PROJECT_GENERATION_DEADLINE_MS = 6 * 60_000;
 
 export class GenerationCancelledError extends Error {
   constructor(message = "生成已撤销。") {
     super(message);
     this.name = "GenerationCancelledError";
-  }
-}
-
-export class PartialGenerationError extends Error {
-  projectSlug: string;
-  projectName: string;
-  files: ContentFile[];
-  failedStage: string;
-
-  constructor(message: string, detail: { projectSlug: string; projectName: string; files: ContentFile[]; failedStage: string; cause?: unknown }) {
-    super(message, { cause: detail.cause });
-    this.name = "PartialGenerationError";
-    this.projectSlug = detail.projectSlug;
-    this.projectName = detail.projectName;
-    this.files = detail.files;
-    this.failedStage = detail.failedStage;
   }
 }
 
@@ -202,13 +203,6 @@ function documentProgress(overrides: Partial<Record<string, { status: Generation
   });
 }
 
-function progressWithAll(status: GenerationDocumentProgressStatus, message?: string): GenerationDocumentProgress[] {
-  return documentProgress(Object.fromEntries(PROJECT_DOCUMENT_DEFINITIONS.map((definition) => [
-    definition.filename,
-    { status, message },
-  ])));
-}
-
 /** CLI 与 Web 共用的完整生成流程。 */
 export async function generateProject(input: GenerateInput, options: GenerateProjectOptions = {}): Promise<GenerateResult> {
   const jobId = options.jobId || `local_${Date.now()}`;
@@ -216,6 +210,14 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
   let finalized = false;
   const projectName = input.projectName?.trim() || input.topic;
   const generationStartedAt = options.generationStartedAt || new Date().toISOString();
+  const deadlineMs = options.deadlineMs ?? PROJECT_GENERATION_DEADLINE_MS;
+  const taskSignal = combineModelRequestSignal(options.signal, deadlineMs);
+  const modelCalls: GenerationModelCallRecord[] = [];
+  const recordModelCall = (record: GenerationModelCallRecord) => {
+    modelCalls.push(record);
+    console.info(`[generation:${jobId}] model ${record.fileName} attempt=${record.attempt} status=${record.status} duration=${record.durationMs}ms kind=${record.failureKind || "none"} promptChars=${record.promptChars} totalTokens=${record.totalTokens ?? "unknown"}`);
+    options.onModelCall?.(record);
+  };
   const model = await loadModelConfig().then((config) => config.model).catch(() => undefined);
   const accountMemoryValue = await getAccountMemory().catch((error) => {
     console.warn(`[generation:${jobId}] 账号记忆读取失败，继续按空记忆生成：${error instanceof Error ? error.message : String(error)}`);
@@ -234,7 +236,14 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
     tempDir = await withStage("write", () => timed(jobId, "创建项目目录耗时", options, () => createTempProjectDirectory(jobId)));
     options.onTempDir?.(tempDir);
 
-    const brief = await withStage("model", () => timed(jobId, "projectBrief 生成耗时", options, () => createProjectBrief(input, accountMemoryPrompt, options.signal)));
+    const brief = await withStage("model", () => timed(jobId, "projectBrief 生成耗时", options, async () => {
+      try {
+        return await createProjectBrief(input, accountMemoryPrompt, taskSignal, recordModelCall);
+      } catch (error) {
+        if (options.signal?.aborted || options.isCancelled?.()) throw new GenerationCancelledError();
+        throw error;
+      }
+    }));
     assertNotCancelled(options);
 
     const progressState = new Map<string, { status: GenerationDocumentProgressStatus; message?: string }>();
@@ -253,22 +262,58 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
       await options.waitIfPaused?.();
       assertNotCancelled(options);
       const accepted = [...results.values()].filter((result) => result.content).map((result) => ({ name: result.definition.filename, content: result.content as string }));
-      const result = await generateValidatedDocument({
-        definition, input, brief, context, accountMemoryPrompt, acceptedDocuments: accepted, signal: options.signal,
-        onState: (state, errors) => report(definition, state, errors),
-      });
+      let result: GeneratedDocumentResult;
+      try {
+        result = await generateValidatedDocument({
+          definition, input, brief, context, accountMemoryPrompt, acceptedDocuments: accepted, signal: taskSignal,
+          onState: (state, errors) => report(definition, state, errors),
+          onModelCall: recordModelCall,
+        });
+      } catch (error) {
+        if (options.signal?.aborted || options.isCancelled?.()) throw new GenerationCancelledError();
+        throw error;
+      }
       results.set(definition.number, result);
+      if (result.content) await writeMarkdown(path.join(tempDir, result.definition.filename), result.content);
       report(definition, result.content ? "completed" : "failed", result.validationErrors);
     };
 
-    const coreQueue = [...CORE_PROJECT_DOCUMENT_DEFINITIONS];
-    let queueIndex = 0;
-    await Promise.all(Array.from({ length: 3 }, async () => {
-      while (queueIndex < coreQueue.length) {
-        const definition = coreQueue[queueIndex++];
-        await generateDefinition(definition);
-      }
-    }));
+    const generateCoreBatch = async (queue: Array<(typeof CORE_PROJECT_DOCUMENT_DEFINITIONS)[number]>) => {
+      let queueIndex = 0;
+      await Promise.all(Array.from({ length: Math.min(3, Math.max(1, queue.length)) }, async () => {
+        while (queueIndex < queue.length) {
+          const definition = queue[queueIndex++];
+          const available = [...results.values()]
+            .filter((result) => result.content)
+            .map((result) => ({ name: result.definition.filename, content: result.content as string }));
+          const context = definition.number === "08"
+            ? qualityReviewContext(available)
+            : definition.number === "04" || definition.number === "05"
+              ? productionContext(available)
+              : "";
+          if (definition.number === "08") {
+            const missing = QUALITY_REVIEW_CONTEXT_FILES.filter((name) => !available.some((document) => document.name === name));
+            if (missing.length) {
+              const failed: GeneratedDocumentResult = { definition, repaired: false, validationErrors: [`依赖文档未通过校验：${missing.join("、")}`] };
+              results.set(definition.number, failed);
+              report(definition, "failed", failed.validationErrors);
+              continue;
+            }
+          }
+          await generateDefinition(definition, context);
+        }
+      }));
+    };
+
+    // 先生成质检和执行文档依赖的三份主文档；第二阶段仍保持三并发，
+    // 但 04/05 可继承口播稿，08 也能审查真实内容，核心阶段仍是三轮请求。
+    const firstPhaseNumbers = new Set(["01", "03", "06"]);
+    await generateCoreBatch(CORE_PROJECT_DOCUMENT_DEFINITIONS.filter((definition) => firstPhaseNumbers.has(definition.number)));
+    const qualityDefinition = CORE_PROJECT_DOCUMENT_DEFINITIONS.find((definition) => definition.number === "08")!;
+    await generateCoreBatch([
+      qualityDefinition,
+      ...CORE_PROJECT_DOCUMENT_DEFINITIONS.filter((definition) => !firstPhaseNumbers.has(definition.number) && definition.number !== "08"),
+    ]);
     assertNotCancelled(options);
 
     const acceptedCore = [...results.values()].filter((result) => result.content).map((result) => ({ name: result.definition.filename, content: result.content as string }));
@@ -277,7 +322,20 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
       const duplicateErrors = validateDocument(result.content as string, result.definition, input, others).filter((error) => error.includes("高度重复"));
       if (duplicateErrors.length) {
         results.set(result.definition.number, { ...result, content: undefined, validationErrors: duplicateErrors });
+        await rm(path.join(tempDir, result.definition.filename), { force: true });
         report(result.definition, "failed", duplicateErrors);
+      }
+    }
+
+    const qualityResult = results.get("08");
+    if (qualityResult?.content) {
+      const availableNames = new Set([...results.values()].filter((result) => result.content).map((result) => result.definition.filename));
+      const missing = QUALITY_REVIEW_CONTEXT_FILES.filter((name) => !availableNames.has(name));
+      if (missing.length) {
+        const errors = [`依赖文档未通过校验：${missing.join("、")}`];
+        results.set("08", { ...qualityResult, content: undefined, validationErrors: errors });
+        await rm(path.join(tempDir, qualityResult.definition.filename), { force: true });
+        report(qualityResult.definition, "failed", errors);
       }
     }
 
@@ -312,10 +370,12 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
       const finishedAt = new Date().toISOString();
       const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(generationStartedAt));
       const complete = files.length === PROJECT_DOCUMENT_DEFINITIONS.length;
+      const deadlineReached = taskSignal.aborted && taskSignal.reason instanceof DOMException && taskSignal.reason.name === "TimeoutError";
+      const status = complete ? "complete" : files.length ? "partial" : "failed";
       await writeJson(path.join(tempDir, "project.json"), {
         ...projectMetadata(input, projectName, { startedAt: generationStartedAt, finishedAt, durationMs }, model, accountMemoryMetadata),
         projectBrief: brief,
-        status: complete ? "complete" : files.length ? "partial" : "failed",
+        status,
         documentsStatus: Object.fromEntries(statusRecords.map((item) => [item.id, item])),
         generated: statusRecords.filter((item) => item.generated).map((item) => item.id),
         repaired: statusRecords.filter((item) => item.repaired).map((item) => item.id),
@@ -323,18 +383,36 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
         validationErrors: Object.fromEntries(statusRecords.filter((item) => item.validationErrors.length).map((item) => [item.id, item.validationErrors])),
         fallbackUsed: statusRecords.some((item) => item.documentStatus === "fallback"),
         fallbackDocuments: statusRecords.filter((item) => item.documentStatus === "fallback").map((item) => item.id),
+        generationDeadlineMs: deadlineMs,
+        generationDeadlineReached: deadlineReached,
+        modelCalls,
       });
     });
     const projectDir = await withStage("write", () => finalizeTempProjectDirectory(tempDir, projectName));
     finalized = true;
     const projectSlug = path.basename(projectDir);
-    await syncProjectDerivedState(projectSlug);
-    if (files.length < PROJECT_DOCUMENT_DEFINITIONS.length) {
-      const failedCount = PROJECT_DOCUMENT_DEFINITIONS.length - files.length;
-      throw new PartialGenerationError(`${files.length}/10 可用，${failedCount} 份生成失败。`, { projectSlug, projectName, files, failedStage: "document-validation" });
-    }
-    options.onStatus?.({ status: "completed", currentDocument: "10_发布承接话术.md", progress: 100, generationProgress: progressWithAll("completed") });
-    return { projectSlug, projectName, files };
+    await syncProjectDerivedState(projectSlug).catch((error) => {
+      console.warn(`[generation:${jobId}] 项目派生状态同步失败：${error instanceof Error ? error.message : String(error)}`);
+    });
+    const documentsStatus = Object.fromEntries(statusRecords.map((record) => [record.id, record]));
+    const failedDocuments = statusRecords
+      .filter((record) => record.failed)
+      .map((record) => ({ id: record.id, fileName: record.fileName, validationErrors: record.validationErrors }));
+    const status = files.length === PROJECT_DOCUMENT_DEFINITIONS.length ? "complete" : files.length ? "partial" : "failed";
+    const deadlineReached = taskSignal.aborted && taskSignal.reason instanceof DOMException && taskSignal.reason.name === "TimeoutError";
+    const message = status === "complete"
+      ? undefined
+      : deadlineReached
+        ? `任务达到 ${formatDuration(deadlineMs)} 截止时间，已保存 ${files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份通过校验的文档。`
+        : `${files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份文档可用，失败文档已保留为待重试状态。`;
+    options.onStatus?.({
+      status: status === "complete" ? "completed" : status,
+      currentDocument: status === "complete" ? "10_发布承接话术.md" : "生成已结束",
+      progress: files.length * 10,
+      message,
+      generationProgress: documentProgress(Object.fromEntries(progressState)),
+    });
+    return { projectSlug, projectName, files, status, documentsStatus, failedDocuments, modelCalls, deadlineReached };
   } catch (error) {
     if (error instanceof GenerationCancelledError) {
       options.onStatus?.({ status: "cancelled", currentDocument: "已撤销", progress: 0 });
@@ -372,8 +450,27 @@ export async function generateEnhancedExecutionPackage(projectSlug: string): Pro
   return result.files.filter((file) => file.name === "09_成片执行稿.md" || file.name === "10_发布承接话术.md");
 }
 
-export async function regenerateProjectDocuments(projectSlug: string, requestedNumbers: string[] = []): Promise<{ files: ContentFile[]; status: "complete" | "partial" | "failed"; documentsStatus: Record<string, DocumentStatusRecord> }> {
+export interface RegenerateProjectOptions {
+  signal?: AbortSignal;
+  deadlineMs?: number;
+  onModelCall?: (record: GenerationModelCallRecord) => void;
+}
+
+export async function regenerateProjectDocuments(
+  projectSlug: string,
+  requestedNumbers: string[] = [],
+  options: RegenerateProjectOptions = {},
+): Promise<{ files: ContentFile[]; status: "complete" | "partial" | "failed"; documentsStatus: Record<string, DocumentStatusRecord>; modelCalls: GenerationModelCallRecord[]; deadlineReached: boolean }> {
   const projectDir = resolveProjectDirectory(projectSlug);
+  const deadlineMs = options.deadlineMs ?? PROJECT_GENERATION_DEADLINE_MS;
+  const taskSignal = combineModelRequestSignal(options.signal, deadlineMs);
+  const modelCalls: GenerationModelCallRecord[] = [];
+  const regenerationId = `regenerate_${projectSlug}_${Date.now()}`;
+  const recordModelCall = (record: GenerationModelCallRecord) => {
+    modelCalls.push(record);
+    console.info(`[generation:${regenerationId}] model ${record.fileName} attempt=${record.attempt} status=${record.status} duration=${record.durationMs}ms kind=${record.failureKind || "none"} promptChars=${record.promptChars} totalTokens=${record.totalTokens ?? "unknown"}`);
+    options.onModelCall?.(record);
+  };
   const metadata = await readProjectMetadata(projectDir);
   const profile = resolveContentProfile(metadata);
   const input: GenerateInput = {
@@ -391,7 +488,7 @@ export async function regenerateProjectDocuments(projectSlug: string, requestedN
   const briefValue = metadata.projectBrief;
   const brief = briefValue && typeof briefValue === "object" && !Array.isArray(briefValue)
     ? briefValue as Awaited<ReturnType<typeof createProjectBrief>>
-    : await createProjectBrief(input, accountMemoryPrompt);
+    : await createProjectBrief(input, accountMemoryPrompt, taskSignal, recordModelCall);
 
   const existing = new Map<string, string>();
   const invalid = new Map<string, string[]>();
@@ -425,25 +522,45 @@ export async function regenerateProjectDocuments(projectSlug: string, requestedN
     ? [...requested].filter((number) => PROJECT_DOCUMENT_DEFINITIONS.some((definition) => definition.number === number))
     : invalid.keys());
   const dependencyMap: Record<string, string[]> = {
+    "08": ["01", "03", "06"],
     "09": ["01", "03", "04", "05", "08"],
     "10": ["01", "03", "06", "08", "09"],
   };
-  for (const number of [...targets]) {
-    for (const dependency of dependencyMap[number] || []) if (invalid.has(dependency)) targets.add(dependency);
+  const dependencyQueue = [...targets];
+  for (let index = 0; index < dependencyQueue.length; index += 1) {
+    for (const dependency of dependencyMap[dependencyQueue[index]] || []) {
+      if (!invalid.has(dependency) || targets.has(dependency)) continue;
+      targets.add(dependency);
+      dependencyQueue.push(dependency);
+    }
   }
 
   const regenerated = new Map<string, GeneratedDocumentResult>();
   const generate = async (definition: (typeof PROJECT_DOCUMENT_DEFINITIONS)[number], context = "") => {
-    const accepted = [...existing.entries()].map(([name, content]) => ({ name, content }));
-    const result = await generateValidatedDocument({ definition, input, brief, context, accountMemoryPrompt, acceptedDocuments: accepted });
+    const accepted = [...existing.entries()]
+      .filter(([name]) => name !== definition.filename)
+      .map(([name, content]) => ({ name, content }));
+    const result = await generateValidatedDocument({ definition, input, brief, context, accountMemoryPrompt, acceptedDocuments: accepted, signal: taskSignal, onModelCall: recordModelCall });
     regenerated.set(definition.number, result);
     if (result.content) existing.set(definition.filename, result.content);
   };
-  const coreTargets = CORE_PROJECT_DOCUMENT_DEFINITIONS.filter((definition) => targets.has(definition.number));
+  const coreTargets = CORE_PROJECT_DOCUMENT_DEFINITIONS.filter((definition) => targets.has(definition.number) && definition.number !== "08");
   let index = 0;
   await Promise.all(Array.from({ length: Math.min(3, Math.max(1, coreTargets.length)) }, async () => {
-    while (index < coreTargets.length) await generate(coreTargets[index++]);
+    while (index < coreTargets.length) {
+      const definition = coreTargets[index++];
+      const context = definition.number === "04" || definition.number === "05"
+        ? productionContext([...existing.entries()].map(([name, content]) => ({ name, content })))
+        : "";
+      await generate(definition, context);
+    }
   }));
+  if (targets.has("08")) {
+    const definition = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === "08")!;
+    const missing = dependencyMap["08"].map((id) => PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === id)!.filename).filter((name) => !existing.has(name));
+    if (missing.length) regenerated.set("08", { definition, repaired: false, validationErrors: [`依赖文档未通过校验：${missing.join("、")}`] });
+    else await generate(definition, qualityReviewContext([...existing.entries()].map(([name, content]) => ({ name, content }))));
+  }
   for (const number of ["09", "10"] as const) {
     if (!targets.has(number)) continue;
     const definition = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === number)!;
@@ -459,19 +576,30 @@ export async function regenerateProjectDocuments(projectSlug: string, requestedN
     if (!definition) continue;
     const result = regenerated.get(number);
     const previousContent = allContents.get(definition.filename);
-    if (previousContent) await archiveDocumentVersion(projectSlug, definition.filename, previousContent, "regenerate");
     if (result?.content) {
+      if (previousContent) await archiveDocumentVersion(projectSlug, definition.filename, previousContent, "regenerate");
       await writeMarkdown(path.join(projectDir, definition.filename), result.content);
-    } else {
-      existing.delete(definition.filename);
-      await rm(path.join(projectDir, definition.filename), { force: true });
     }
   }
 
   const records: DocumentStatusRecord[] = PROJECT_DOCUMENT_DEFINITIONS.map((definition) => {
     const result = regenerated.get(definition.number);
-    if (result) return statusRecord(result);
     const content = existing.get(definition.filename);
+    if (result?.content) return statusRecord(result);
+    // 手动重试一份原本有效的文档失败时，保留原版本及其可用状态。
+    if (result && content) {
+      return {
+        id: definition.number,
+        fileName: definition.filename,
+        status: "completed",
+        documentStatus: "generated",
+        generated: true,
+        repaired: false,
+        failed: false,
+        validationErrors: [],
+      };
+    }
+    if (result) return statusRecord(result);
     const completed = Boolean(content);
     // 检测现有文档是否含占位语
     const hasFallback = completed && PLACEHOLDER_PHRASES.some((phrase) => content!.includes(phrase));
@@ -490,6 +618,7 @@ export async function regenerateProjectDocuments(projectSlug: string, requestedN
   const completedCount = records.filter((record) => record.generated).length;
   const status = completedCount === 10 ? "complete" : completedCount ? "partial" : "failed";
   const documentsStatus = Object.fromEntries(records.map((record) => [record.id, record]));
+  const deadlineReached = taskSignal.aborted && taskSignal.reason instanceof DOMException && taskSignal.reason.name === "TimeoutError";
   await writeJson(path.join(projectDir, "project.json"), {
     ...metadata,
     projectBrief: brief,
@@ -502,12 +631,20 @@ export async function regenerateProjectDocuments(projectSlug: string, requestedN
     fallbackUsed: records.some((record) => record.documentStatus === "fallback"),
     fallbackDocuments: records.filter((record) => record.documentStatus === "fallback").map((record) => record.id),
     regeneratedAt: new Date().toISOString(),
+    lastRegeneration: {
+      requestedDocuments: [...requested],
+      deadlineMs,
+      deadlineReached,
+      modelCalls,
+    },
   });
   await syncProjectDerivedState(projectSlug);
   return {
     files: [...existing.entries()].map(([name, content]) => ({ name, content })).sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true })),
     status,
     documentsStatus,
+    modelCalls,
+    deadlineReached,
   };
 }
 

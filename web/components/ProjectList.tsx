@@ -179,7 +179,7 @@ export function ProjectList() {
           <div className="project-card-top">
             <span className="project-sequence">项目 {String(index + 1).padStart(3, "0")}</span>
             <div className="project-card-actions">
-              <span className="project-ready"><i /> {project.status === "complete" ? "10/10 可用" : project.status === "partial" ? `${project.completedCount}/10 可用` : "待修复"}</span>
+              <span className="project-ready"><i /> {project.status === "complete" ? "10/10 可用" : project.status === "partial" ? `${project.completedCount}/10 可用` : "待重试"}</span>
               <a className="project-delete-button" href={`/api/projects/${encodeURIComponent(project.slug)}/export`} download title="导出项目" aria-label={`导出项目 ${project.name}`}><DownloadSimple size={15} /></a>
               <button
                 className="project-delete-button"

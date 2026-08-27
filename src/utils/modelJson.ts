@@ -22,7 +22,7 @@ function normalizeCommonCharacters(raw: string): string {
     .replace(/\u00A0/gu, " ");
 }
 
-function cleanModelOutput(raw: string): string {
+export function cleanModelOutput(raw: string): string {
   return normalizeCommonCharacters(raw)
     .replace(/<think\b[^>]*>[\s\S]*?<\/think>/giu, "")
     .replace(/```\s*(?:json)?\s*/giu, "")

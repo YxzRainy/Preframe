@@ -24,6 +24,21 @@ export interface ProjectBrief {
   riskBoundaries: string;
 }
 
+function documentSpecificInstructions(number: string): string {
+  if (number === "04") {
+    return "分镜、字幕和节奏必须逐段对应依赖中的口播脚本，不得另写一套论点或案例。";
+  }
+  if (number === "05") {
+    return "拍摄清单必须覆盖依赖口播脚本中的主要场景、动作和证据素材，并给出无法实拍时的替代素材。";
+  }
+  if (number === "08") {
+    return `这是一份针对依赖文档的真实质检，不是通用检查清单。必须逐项引用依赖中的具体原句或场景。
+必须包含一个 Markdown 表格，表头至少包含“文档/位置｜原表达/场景｜问题｜可直接替换的新句子｜优先级”，并给出至少 3 条修改项，其中至少 1 条为高优先级。
+表格之后给出“可直接发布/修改后可发布/不建议发布”三选一结论；没有证据的问题不要虚构。`;
+  }
+  return "";
+}
+
 export function buildProjectBriefPrompt(input: GenerateInput, accountMemoryPrompt = ""): string {
   return `请把以下短视频项目整理为统一 projectBrief。只输出 JSON 对象，不要代码围栏或解释。
 {
@@ -58,9 +73,12 @@ ${JSON.stringify(brief, null, 2)}
 
 当前文档：${definition.number}_${definition.title}.md
 必须使用一级标题“# ${definition.title}”。
-必须包含以下二级标题：${definition.requiredSections.map((item) => `## ${item}`).join("、")}。
+${definition.requiredSections.length
+    ? `必须包含以下二级标题：${definition.requiredSections.map((item) => `## ${item}`).join("、")}。`
+    : "二级标题可按内容组织，但必须让用户能够快速定位结论、证据和修改动作。"}
 正文至少 ${definition.minLength} 个字符，必须具体关联选题、内容主体、平台和目标用户，不能写占位语或通用空模板。
 ${context ? `仅可参考以下已通过校验的依赖文档：\n${context}` : ""}
+${documentSpecificInstructions(definition.number)}
 ${accountMemoryPrompt}
 
 ${HUMAN_WRITING_RULES}
@@ -71,10 +89,22 @@ ${HUMAN_WRITING_RULES}
 export function buildDocumentRepairPrompt(
   raw: string,
   errors: string[],
-  definition: { title: string; requiredSections: readonly string[]; minLength: number },
+  definition: { number: string; title: string; requiredSections: readonly string[]; minLength: number },
+  brief: ProjectBrief,
+  input: GenerateInput,
+  context = "",
+  accountMemoryPrompt = "",
 ): string {
   return `修复下面这份“${definition.title}”文档。问题：${errors.join("；")}。
-保留有效内容，补齐二级标题 ${definition.requiredSections.join("、")}，正文至少 ${definition.minLength} 字符。禁止占位语。
+保留有效内容，${definition.requiredSections.length ? `补齐二级标题 ${definition.requiredSections.join("、")}，` : "保留清晰的 Markdown 层级，"}正文至少 ${definition.minLength} 字符。禁止占位语。
+修复后必须继续明确关联选题“${input.topic}”、内容主体“${input.contentSubject}”、平台“${input.platform}”和目标用户“${input.targetAudience}”。
+
+统一 projectBrief：
+${JSON.stringify(brief, null, 2)}
+${context ? `仍须遵循以下已通过校验的依赖文档：\n${context}` : ""}
+${documentSpecificInstructions(definition.number)}
+${accountMemoryPrompt}
+
 只输出 JSON：{"content":"修复后的完整 Markdown"}。
 
 原始输出：

@@ -1,7 +1,13 @@
 import { buildDocumentPrompt, buildDocumentRepairPrompt, buildProjectBriefPrompt, type GenerateInput, type ProjectBrief } from "../prompts/generatePrompt.js";
-import { parseModelJsonObject } from "../utils/modelJson.js";
+import { cleanModelOutput, parseModelJsonObject } from "../utils/modelJson.js";
 import { PLACEHOLDER_PHRASES, PROJECT_DOCUMENT_DEFINITIONS, type ProjectDocumentDefinition } from "../utils/documentDefinitions.js";
-import { callModel } from "./modelClient.js";
+import {
+  callModel,
+  modelFailureKind,
+  type CallModelOptions,
+  type ModelFailureKind,
+  type ModelResponseMetrics,
+} from "./modelClient.js";
 import { AI_SLOP_PHRASES } from "../prompts/humanWritingRules.js";
 
 /** 占位语列表导出，层只相容性。 */
@@ -31,6 +37,41 @@ export interface GeneratedDocumentResult {
   validationErrors: string[];
 }
 
+/** 首次生成失败后仅允许一次分类重试，避免单份文档放大为长时间阻塞。 */
+export const DOCUMENT_RETRY_LIMIT = 1;
+
+export type GenerationCallFailureKind = ModelFailureKind | "parse" | "validation" | "deadline";
+
+export interface GenerationModelCallRecord {
+  documentId: string;
+  fileName: string;
+  attempt: number;
+  mode: "generate" | "repair";
+  startedAt: string;
+  durationMs: number;
+  promptChars: number;
+  outputChars?: number;
+  status: "completed" | "invalid" | "failed";
+  failureKind?: GenerationCallFailureKind;
+  message?: string;
+  finishReason?: string;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  /** 仅在模型响应无法直接使用时保留，供本地恢复与诊断。 */
+  rawOutput?: string;
+}
+
+type DocumentModelCall = (prompt: string, options?: CallModelOptions) => Promise<string>;
+
+function taskDeadlineReached(signal: AbortSignal | undefined): boolean {
+  return Boolean(signal?.aborted && signal.reason instanceof DOMException && signal.reason.name === "TimeoutError");
+}
+
+function shouldRetryModelFailure(kind: ModelFailureKind): boolean {
+  return kind === "rate_limit" || kind === "server" || kind === "length";
+}
+
 const PLACEHOLDERS: readonly string[] = PLACEHOLDER_PHRASES;
 
 function normalizeHeading(value: string): string {
@@ -53,6 +94,34 @@ function similarity(left: string, right: string): number {
   return intersection / Math.min(a.size, b.size);
 }
 
+function validateQualityCheckReport(content: string): string[] {
+  const errors: string[] = [];
+  const lines = content.split("\n");
+  let matchingTableRows = 0;
+  let hasHighPriority = false;
+
+  for (let index = 0; index < lines.length - 1; index += 1) {
+    const header = lines[index]?.trim() || "";
+    const separator = lines[index + 1]?.trim() || "";
+    if (!/^\|.*\|$/u.test(header) || !/^\|(?:\s*:?-{3,}:?\s*\|)+$/u.test(separator)) continue;
+    const normalizedHeader = normalizeHeading(header);
+    if (!["文档", "原表达", "问题", "替换", "优先级"].every((term) => normalizedHeader.includes(term))) continue;
+
+    for (let rowIndex = index + 2; rowIndex < lines.length && /^\|.*\|$/u.test(lines[rowIndex]?.trim() || ""); rowIndex += 1) {
+      const row = lines[rowIndex].trim();
+      if (!row.replace(/[|\s]/gu, "")) continue;
+      matchingTableRows += 1;
+      if (/\|\s*(?:高|P[01])(?:\s*优先级)?\s*\|?$/iu.test(row)) hasHighPriority = true;
+    }
+    break;
+  }
+
+  if (matchingTableRows < 3) errors.push("质检报告缺少至少 3 条带原文证据和替换句的修改表");
+  if (matchingTableRows >= 3 && !hasHighPriority) errors.push("质检报告修改表缺少高优先级事项");
+  if (!/(?:可直接发布|修改后可发布|不建议发布)/u.test(content)) errors.push("质检报告缺少明确发布结论");
+  return errors;
+}
+
 export function validateDocument(content: string, definition: ProjectDocumentDefinition, input: GenerateInput, otherDocuments: Array<{ name: string; content: string }> = []): string[] {
   const errors: string[] = [];
   const normalized = content.trim();
@@ -70,6 +139,7 @@ export function validateDocument(content: string, definition: ProjectDocumentDef
     const expected = normalizeHeading(section);
     if (!headings.some((heading) => heading.includes(expected) || expected.includes(heading))) errors.push(`缺少二级标题：${section}`);
   }
+  if (definition.number === "08") errors.push(...validateQualityCheckReport(normalized));
   const signals = relevanceSignals(input);
   if (!signals.some((signal) => normalized.includes(signal))) errors.push("与当前选题、主体、平台或目标用户缺少明确关联");
   for (const other of otherDocuments) {
@@ -81,16 +151,77 @@ export function validateDocument(content: string, definition: ProjectDocumentDef
   return [...new Set(errors)];
 }
 
-function parseDocument(raw: string): string {
-  const parsed = parseModelJsonObject(raw, "单文档模型输出");
-  if (typeof parsed.content !== "string" || !parsed.content.trim()) throw new Error("缺少 content 字段");
-  return parsed.content.trim();
+function markdownDocumentFromRaw(raw: string, definition: ProjectDocumentDefinition): string | null {
+  const cleaned = cleanModelOutput(raw);
+  const candidates = [cleaned];
+  try {
+    const parsed: unknown = JSON.parse(cleaned);
+    if (typeof parsed === "string") candidates.unshift(parsed.trim());
+  } catch {
+    // Bare Markdown is handled below.
+  }
+
+  const titlePattern = new RegExp(`^#\\s+${definition.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "mu");
+  for (const candidate of candidates) {
+    const match = titlePattern.exec(candidate);
+    if (match?.index !== undefined) return candidate.slice(match.index).trim();
+  }
+  return null;
 }
 
-export async function createProjectBrief(input: GenerateInput, accountMemoryPrompt: string, signal?: AbortSignal): Promise<ProjectBrief> {
-  const raw = await callModel(buildProjectBriefPrompt(input, accountMemoryPrompt), { signal });
+function parseDocument(raw: string, definition: ProjectDocumentDefinition): string {
+  let parseError: unknown;
+  try {
+    const parsed = parseModelJsonObject(raw, "单文档模型输出");
+    if (typeof parsed.content === "string" && parsed.content.trim()) return parsed.content.trim();
+    parseError = new Error("缺少 content 字段");
+  } catch (error) {
+    parseError = error;
+  }
+
+  const markdown = markdownDocumentFromRaw(raw, definition);
+  if (markdown) return markdown;
+  throw parseError;
+}
+
+export async function createProjectBrief(
+  input: GenerateInput,
+  accountMemoryPrompt: string,
+  signal?: AbortSignal,
+  onModelCall?: (record: GenerationModelCallRecord) => void,
+): Promise<ProjectBrief> {
+  const prompt = buildProjectBriefPrompt(input, accountMemoryPrompt);
+  const startedAt = new Date().toISOString();
+  const started = performance.now();
+  let metrics: ModelResponseMetrics = {};
+  let raw = "";
+  try {
+    raw = await callModel(prompt, { signal, onMetrics: (value) => { metrics = value; } });
+  } catch (error) {
+    const kind: GenerationCallFailureKind = taskDeadlineReached(signal) ? "deadline" : modelFailureKind(error);
+    onModelCall?.({ documentId: "brief", fileName: "projectBrief", attempt: 1, mode: "generate", startedAt, durationMs: Math.round(performance.now() - started), promptChars: prompt.length, status: "failed", failureKind: kind, message: error instanceof Error ? error.message : String(error), ...metrics });
+    throw error;
+  }
   let parsed: Record<string, unknown> = {};
-  try { parsed = parseModelJsonObject(raw, "projectBrief"); } catch { /* Input-derived brief remains safe and consistent. */ }
+  let parseMessage = "";
+  try {
+    parsed = parseModelJsonObject(raw, "projectBrief");
+  } catch (error) {
+    parseMessage = error instanceof Error ? error.message : String(error);
+  }
+  onModelCall?.({
+    documentId: "brief",
+    fileName: "projectBrief",
+    attempt: 1,
+    mode: "generate",
+    startedAt,
+    durationMs: Math.round(performance.now() - started),
+    promptChars: prompt.length,
+    outputChars: raw.length,
+    status: parseMessage ? "invalid" : "completed",
+    ...(parseMessage ? { failureKind: "parse" as const, message: `${parseMessage}；已使用输入信息构建安全简报` } : {}),
+    ...metrics,
+  });
   return {
     topic: input.topic,
     contentSubject: input.contentSubject,
@@ -114,41 +245,55 @@ export async function generateValidatedDocument(args: {
   acceptedDocuments?: Array<{ name: string; content: string }>;
   signal?: AbortSignal;
   onState?: (state: DocumentState, errors?: string[]) => void;
+  modelCall?: DocumentModelCall;
+  onModelCall?: (record: GenerationModelCallRecord) => void;
 }): Promise<GeneratedDocumentResult> {
-  const { definition, input, brief, context = "", accountMemoryPrompt = "", acceptedDocuments = [], signal, onState } = args;
+  const { definition, input, brief, context = "", accountMemoryPrompt = "", acceptedDocuments = [], signal, onState, modelCall = callModel, onModelCall } = args;
   let lastErrors: string[] = [];
   let raw = "";
-  onState?.("generating");
-  try {
-    raw = await callModel(buildDocumentPrompt(brief, definition, context, accountMemoryPrompt), { signal });
-    onState?.("validating");
-    const content = parseDocument(raw);
-    lastErrors = validateDocument(content, definition, input, acceptedDocuments);
-    if (!lastErrors.length) return { definition, content, repaired: false, validationErrors: [] };
-  } catch (error) {
-    lastErrors = [error instanceof Error ? error.message : "解析失败"];
-  }
 
-  onState?.("repairing", lastErrors);
-  try {
-    const repairedRaw = await callModel(buildDocumentRepairPrompt(raw, lastErrors, definition), { signal });
-    onState?.("validating");
-    const content = parseDocument(repairedRaw);
-    lastErrors = validateDocument(content, definition, input, acceptedDocuments);
-    if (!lastErrors.length) return { definition, content, repaired: true, validationErrors: [] };
-  } catch (error) {
-    lastErrors = [error instanceof Error ? error.message : "修复解析失败"];
-  }
-
-  onState?.("generating", lastErrors);
-  try {
-    const regeneratedRaw = await callModel(buildDocumentPrompt(brief, definition, context, accountMemoryPrompt, true), { signal });
-    onState?.("validating");
-    const content = parseDocument(regeneratedRaw);
-    lastErrors = validateDocument(content, definition, input, acceptedDocuments);
-    if (!lastErrors.length) return { definition, content, repaired: false, validationErrors: [] };
-  } catch (error) {
-    lastErrors = [error instanceof Error ? error.message : "重新生成解析失败"];
+  for (let attempt = 0; attempt <= DOCUMENT_RETRY_LIMIT; attempt += 1) {
+    if (signal?.aborted) {
+      if (!taskDeadlineReached(signal)) throw signal.reason || new DOMException("任务已取消", "AbortError");
+      lastErrors = ["任务达到 06:00 截止时间，已停止继续调用模型"];
+      break;
+    }
+    const retrying = attempt > 0;
+    onState?.(retrying && raw ? "repairing" : "generating", retrying ? lastErrors : undefined);
+    const prompt = !retrying
+      ? buildDocumentPrompt(brief, definition, context, accountMemoryPrompt)
+      : raw
+        ? buildDocumentRepairPrompt(raw, lastErrors, definition, brief, input, context, accountMemoryPrompt)
+        : buildDocumentPrompt(brief, definition, context, accountMemoryPrompt, true);
+    const startedAt = new Date().toISOString();
+    const started = performance.now();
+    let metrics: ModelResponseMetrics = {};
+    let receivedResponse = false;
+    try {
+      raw = await modelCall(prompt, { signal, onMetrics: (value) => { metrics = value; } });
+      receivedResponse = true;
+      onState?.("validating");
+      const content = parseDocument(raw, definition);
+      lastErrors = validateDocument(content, definition, input, acceptedDocuments);
+      const durationMs = Math.round(performance.now() - started);
+      if (!lastErrors.length) {
+        onModelCall?.({ documentId: definition.number, fileName: definition.filename, attempt: attempt + 1, mode: retrying ? "repair" : "generate", startedAt, durationMs, promptChars: prompt.length, outputChars: raw.length, status: "completed", ...metrics });
+        return { definition, content, repaired: retrying, validationErrors: [] };
+      }
+      onModelCall?.({ documentId: definition.number, fileName: definition.filename, attempt: attempt + 1, mode: retrying ? "repair" : "generate", startedAt, durationMs, promptChars: prompt.length, outputChars: raw.length, status: "invalid", failureKind: "validation", message: lastErrors.join("；"), rawOutput: raw, ...metrics });
+    } catch (error) {
+      if (signal?.aborted && !taskDeadlineReached(signal)) throw error;
+      const durationMs = Math.round(performance.now() - started);
+      const kind: GenerationCallFailureKind = taskDeadlineReached(signal)
+        ? "deadline"
+        : receivedResponse && modelFailureKind(error) === "unknown"
+          ? "parse"
+          : modelFailureKind(error);
+      lastErrors = [kind === "deadline" ? "任务达到 06:00 截止时间，已停止继续调用模型" : error instanceof Error ? error.message : retrying ? "重试解析失败" : "解析失败"];
+      onModelCall?.({ documentId: definition.number, fileName: definition.filename, attempt: attempt + 1, mode: retrying ? "repair" : "generate", startedAt, durationMs, promptChars: prompt.length, outputChars: raw.length || undefined, status: "failed", failureKind: kind, message: lastErrors[0], ...(receivedResponse ? { rawOutput: raw } : {}), ...metrics });
+      if (kind === "deadline" || kind === "timeout" || kind === "auth" || kind === "config" || kind === "cancelled") break;
+      if (kind !== "parse" && !shouldRetryModelFailure(kind)) break;
+    }
   }
 
   onState?.("failed", lastErrors);

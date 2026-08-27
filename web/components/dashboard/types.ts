@@ -65,17 +65,6 @@ export interface DashboardData {
   outputDir: string;
 }
 
-export interface Task {
-  id: string;
-  title: string;
-  completed: boolean;
-  priority: "low" | "medium" | "high";
-  dueDate?: string;
-  projectSlug?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface Idea {
   id: string;
   title: string;
@@ -109,13 +98,4 @@ export function formatRelativeTime(iso: string): string {
   const day = Math.floor(hr / 24);
   if (day < 30) return `${day} 天前`;
   return new Date(t).toLocaleDateString("zh-CN");
-}
-
-export function isToday(iso?: string): boolean {
-  if (!iso) return false;
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return false;
-  const d = new Date(t);
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
 }

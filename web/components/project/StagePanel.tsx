@@ -47,6 +47,7 @@ export function StagePanel({ slug }: StagePanelProps) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [overview, setOverview] = useState<CockpitData | null>(null);
+  const [editingNextAction, setEditingNextAction] = useState(false);
 
   async function loadOverview() {
     const res = await fetch(`/api/projects/${encodeURIComponent(slug)}/overview`, { cache: "no-store" });
@@ -92,8 +93,27 @@ export function StagePanel({ slug }: StagePanelProps) {
   return (
     <section className="stage-panel" aria-label="项目阶段">
       <header className="cockpit-header">
-        <div><span>项目驾驶舱</span><h3>{STAGE_OPTIONS.find((item) => item.value === stage)?.label || "读取中"}</h3></div>
-        <p>{overview?.nextAction || nextAction || "正在整理下一步行动"}</p>
+        <div>
+          <span>项目进度</span>
+          <h3>{STAGE_OPTIONS.find((item) => item.value === stage)?.label || "读取中"}</h3>
+        </div>
+        <div className="cockpit-next-action">
+          <span>下一步</span>
+          {editingNextAction ? (
+            <textarea
+              aria-label="下一步行动"
+              rows={2}
+              value={nextAction}
+              onChange={(event) => setNextAction(event.target.value)}
+              autoFocus
+            />
+          ) : (
+            <p>{overview?.nextAction || nextAction || "正在整理下一步行动"}</p>
+          )}
+          <button type="button" className="project-text-button" onClick={() => setEditingNextAction((current) => !current)}>
+            {editingNextAction ? "收起编辑" : "修改"}
+          </button>
+        </div>
       </header>
       {overview && (
         <div className="cockpit-metrics" aria-label="项目完成度">
@@ -103,23 +123,19 @@ export function StagePanel({ slug }: StagePanelProps) {
           <div className={`cockpit-metric tone-${overview.publishing.tone}`}><span>发布准备</span><strong>{overview.publishing.label}</strong><small>{overview.publishing.detail}</small></div>
         </div>
       )}
-      <div className="stage-panel-body">
-        <label>
-          <span>当前阶段</span>
+      <div className="stage-panel-body stage-panel-controls">
+        <label className="stage-selector">
+          <span>更新项目状态</span>
           <select value={stage || "idea"} onChange={(e) => setStage(e.target.value as ProjectStage)}>
             {STAGE_OPTIONS.map((opt) => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}
           </select>
         </label>
-        <label>
-          <span>下一步动作</span>
-          <textarea rows={2} value={nextAction} onChange={(e) => setNextAction(e.target.value)} placeholder="例如：确认选题后生成策划文档" />
-        </label>
-        {stageUpdatedAt && <p className="stage-updated">阶段更新于 {new Date(stageUpdatedAt).toLocaleString("zh-CN")}</p>}
         <div className="stage-actions">
           <button type="button" className="primary-button" onClick={save} disabled={saving || !stage}>
-            {saving ? "保存中…" : "保存阶段"}
+            {saving ? "更新中…" : "更新状态"}
           </button>
         </div>
+        {stageUpdatedAt && <p className="stage-updated">上次更新：{new Date(stageUpdatedAt).toLocaleString("zh-CN")}</p>}
         {error && <p className="stage-error">{error}</p>}
         {notice && <p className="stage-notice">{notice}</p>}
       </div>

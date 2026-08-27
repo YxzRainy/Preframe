@@ -1,6 +1,8 @@
 import { ProjectList } from "../../components/ProjectList";
 import { StatusBadge } from "../../components/StatusBadge";
 
+export const metadata = { title: "项目库" };
+
 export default function ProjectsPage() {
   return (
     <main className="page-shell project-library-shell">

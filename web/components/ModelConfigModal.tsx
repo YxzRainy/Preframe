@@ -13,6 +13,8 @@ type ModelProvider =
   | "openrouter"
   | "custom";
 
+type ModelThinkingMode = "disabled" | "low" | "high" | "max";
+
 interface PublicModelConfig {
   provider: ModelProvider;
   providerLabel: string;
@@ -20,6 +22,7 @@ interface PublicModelConfig {
   model: string;
   temperature: number;
   maxTokens: number;
+  thinkingMode: ModelThinkingMode;
   maskedApiKey: string;
   configured: boolean;
   source: "file" | "env" | "default";
@@ -44,6 +47,7 @@ interface FormState {
   model: string;
   temperature: string;
   maxTokens: string;
+  thinkingMode: ModelThinkingMode;
 }
 
 const emptyConfig: FormState = {
@@ -53,6 +57,7 @@ const emptyConfig: FormState = {
   model: "deepseek-chat",
   temperature: "0.7",
   maxTokens: "4096",
+  thinkingMode: "low",
 };
 
 function labelFromConfig(config: PublicModelConfig): string {
@@ -93,6 +98,7 @@ export function ModelConfigModal({ open, onClose, onSaved }: ModelConfigModalPro
       model: data.config.model,
       temperature: String(data.config.temperature),
       maxTokens: String(data.config.maxTokens),
+      thinkingMode: data.config.thinkingMode,
     });
     setStatus(data.config.configured ? "已配置" : "未配置");
     setMessage(data.config.configured ? `当前使用：${labelFromConfig(data.config)}` : "未保存本地配置时，将继续使用 .env 或默认配置。");
@@ -120,6 +126,7 @@ export function ModelConfigModal({ open, onClose, onSaved }: ModelConfigModalPro
       model: preset?.defaults.model || currentForm.model,
       temperature: String(preset?.defaults.temperature ?? currentForm.temperature),
       maxTokens: String(preset?.defaults.maxTokens ?? currentForm.maxTokens),
+      thinkingMode: preset?.defaults.thinkingMode ?? currentForm.thinkingMode,
     }));
   }
 
@@ -131,6 +138,7 @@ export function ModelConfigModal({ open, onClose, onSaved }: ModelConfigModalPro
       model: form.model,
       temperature: Number(form.temperature),
       maxTokens: Number(form.maxTokens),
+      thinkingMode: form.thinkingMode,
     };
   }
 
@@ -199,6 +207,7 @@ export function ModelConfigModal({ open, onClose, onSaved }: ModelConfigModalPro
         model: data.config.model,
         temperature: String(data.config.temperature),
         maxTokens: String(data.config.maxTokens),
+        thinkingMode: data.config.thinkingMode,
       });
       setStatus(data.config.configured ? "已配置" : "未配置");
       setMessage("已恢复为 .env / DeepSeek 默认读取方式。");
@@ -268,6 +277,17 @@ export function ModelConfigModal({ open, onClose, onSaved }: ModelConfigModalPro
             <span>Max Tokens</span>
             <input required min="256" step="256" type="number" value={form.maxTokens} onChange={(event) => update("maxTokens", event.target.value)} />
           </label>
+          {form.provider === "deepseek" && (
+            <label>
+              <span>思考强度</span>
+              <select value={form.thinkingMode} onChange={(event) => update("thinkingMode", event.target.value as ModelThinkingMode)}>
+                <option value="disabled">关闭</option>
+                <option value="low">Low</option>
+                <option value="high">High</option>
+                <option value="max">Max</option>
+              </select>
+            </label>
+          )}
         </div>
       </form>
     </Modal>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ShotTask } from "../../src/types/shotTask";
 import type { FeedbackRevision, ShotActualOutcome, ShotActualRecord, ShootingFeedback } from "../../src/types/shootingFeedback";
 import { readJsonResponse } from "../lib/readJsonResponse";
@@ -81,12 +81,6 @@ export function ShootingFeedbackPanel({ slug, shotTasks, onChanged }: ShootingFe
       .catch((err) => active && setError(err instanceof Error ? err.message : "拍摄复盘读取失败。"));
     return () => { active = false; };
   }, [slug, shotTasks]);
-
-  const plannedSeconds = useMemo(() => draft.shotRecords.reduce((sum, record) => sum + (record.plannedDurationSeconds || 0), 0), [draft.shotRecords]);
-  const actualSeconds = useMemo(() => draft.shotRecords.reduce((sum, record) => sum + (record.actualDurationSeconds || 0), 0), [draft.shotRecords]);
-  const removedCount = draft.shotRecords.filter((record) => record.outcome === "removed").length;
-  const reshootCount = draft.shotRecords.filter((record) => record.outcome === "reshoot").length;
-  const issueCount = splitLines(draft.issuesText).length + draft.shotRecords.filter((record) => record.issue?.trim()).length;
 
   function patchDraft(patch: Partial<DraftFeedback>) {
     setDraft((current) => ({ ...current, ...patch }));
@@ -176,9 +170,7 @@ export function ShootingFeedbackPanel({ slug, shotTasks, onChanged }: ShootingFe
     <section className="shooting-feedback-panel">
       <div className="shooting-feedback-header">
         <div>
-          <span className="eyebrow">FIELD REVIEW</span>
           <h3>拍摄复盘</h3>
-          <p>把现场发生的事记下来，再用证据生成下一版内容。</p>
         </div>
         <div className="shooting-feedback-actions">
           {feedbacks.length > 0 && (
@@ -194,28 +186,12 @@ export function ShootingFeedbackPanel({ slug, shotTasks, onChanged }: ShootingFe
         </div>
       </div>
 
-      <div className="shooting-feedback-meta">
-        <label><span>复盘名称</span><input value={draft.title} onChange={(e) => patchDraft({ title: e.target.value })} placeholder="例如：第一轮棚拍" /></label>
-        <label><span>拍摄日期</span><input type="date" value={draft.shootDate} onChange={(e) => patchDraft({ shootDate: e.target.value })} /></label>
-        <label><span>场地</span><input value={draft.location} onChange={(e) => patchDraft({ location: e.target.value })} placeholder="可选" /></label>
-      </div>
-
-      <div className="shooting-feedback-stats">
-        <div><small>计划时长</small><strong>{plannedSeconds || 0}s</strong></div>
-        <div><small>实际时长</small><strong>{actualSeconds || 0}s</strong></div>
-        <div><small>现场删镜</small><strong>{removedCount}</strong></div>
-        <div><small>补拍镜头</small><strong>{reshootCount}</strong></div>
-        <div><small>问题数</small><strong>{issueCount}</strong></div>
-      </div>
-
       <div className="shooting-feedback-table-wrap">
         <table className="shooting-feedback-table">
-          <thead><tr><th>镜头</th><th>计划</th><th>实际</th><th>现场结果</th><th>问题 / 备注</th></tr></thead>
+          <thead><tr><th>镜头</th><th>现场结果</th><th>问题 / 备注</th></tr></thead>
           <tbody>{draft.shotRecords.map((record) => (
             <tr key={`${record.shotTaskId}-${record.order}`}>
               <td><strong>#{String(record.order).padStart(2, "0")}</strong><small>{record.label || "镜头"}</small></td>
-              <td>{record.plannedDurationSeconds ? `${record.plannedDurationSeconds}s` : "-"}</td>
-              <td><input className="feedback-number" type="number" min="0" value={record.actualDurationSeconds ?? ""} onChange={(e) => patchRecord(record.order, { actualDurationSeconds: e.target.value ? Number(e.target.value) : undefined })} /></td>
               <td><select value={record.outcome} onChange={(e) => patchRecord(record.order, { outcome: e.target.value as ShotActualOutcome })}>{Object.entries(OUTCOME_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td>
               <td><input value={record.issue || record.note || ""} onChange={(e) => patchRecord(record.order, { issue: e.target.value })} placeholder="现场问题、删镜原因或补拍说明" /></td>
             </tr>
@@ -224,21 +200,17 @@ export function ShootingFeedbackPanel({ slug, shotTasks, onChanged }: ShootingFe
       </div>
 
       <div className="shooting-feedback-grid">
-        <label><span>现场新增镜头（每行一条，可用“镜头｜原因”）</span><textarea rows={3} value={draft.addedShotsText} onChange={(e) => patchDraft({ addedShotsText: e.target.value })} placeholder="补了一条手部特写｜原镜头信息不够清楚" /></label>
-        <label><span>现场问题（每行一条）</span><textarea rows={3} value={draft.issuesText} onChange={(e) => patchDraft({ issuesText: e.target.value })} placeholder="收音有空调底噪\n场地反光，产品细节看不清" /></label>
-        <label><span>整体复盘</span><textarea rows={3} value={draft.overallNote} onChange={(e) => patchDraft({ overallNote: e.target.value })} placeholder="哪些安排真正帮上忙？哪些地方拖慢了拍摄？" /></label>
-        <label><span>下一版脚本要改什么</span><textarea rows={3} value={draft.scriptAdjustments} onChange={(e) => patchDraft({ scriptAdjustments: e.target.value })} placeholder="保留有效开头，删掉现场说不顺的第二段" /></label>
-        <label><span>下一版分镜要改什么</span><textarea rows={3} value={draft.storyboardAdjustments} onChange={(e) => patchDraft({ storyboardAdjustments: e.target.value })} placeholder="把补拍特写放到第 3 镜头，减少需要换机位的镜头" /></label>
-        <label><span>下一版拍摄清单要改什么</span><textarea rows={3} value={draft.checklistAdjustments} onChange={(e) => patchDraft({ checklistAdjustments: e.target.value })} placeholder="补充收音检查和反光处理" /></label>
+        <label><span>新增镜头</span><textarea rows={3} value={draft.addedShotsText} onChange={(e) => patchDraft({ addedShotsText: e.target.value })} placeholder="一行一条：镜头｜原因" /></label>
+        <label><span>现场问题</span><textarea rows={3} value={draft.issuesText} onChange={(e) => patchDraft({ issuesText: e.target.value })} placeholder="一行一条" /></label>
+        <label><span>下一版调整</span><textarea rows={3} value={draft.overallNote} onChange={(e) => patchDraft({ overallNote: e.target.value })} placeholder="保留什么、修正什么" /></label>
       </div>
 
       {error && <div className="product-alert alert-warning"><span>!</span><p>{error}</p></div>}
       {notice && <div className="product-alert alert-success"><span>✓</span><p>{notice}</p></div>}
-      {revision && <div className="feedback-revision-result"><strong>Revision 已保存</strong><span>{revision.directory}</span><small>{revision.files.map((file) => `${file.filename} +${file.lineAdded}/-${file.lineRemoved}`).join(" · ")}</small><button type="button" className="secondary-button" disabled={busy !== ""} onClick={applyRevision}>应用到当前项目</button></div>}
+      {revision && <div className="feedback-revision-result"><strong>下一版已生成</strong><button type="button" className="secondary-button" disabled={busy !== ""} onClick={applyRevision}>应用到项目</button></div>}
 
       <div className="shooting-feedback-footer">
-        <small>保存后不会覆盖原策划文件；生成下一版会保留原文件和差异统计。</small>
-        <div><button type="button" className="secondary-button" disabled={busy !== ""} onClick={save}>{busy === "save" ? "保存中…" : "保存复盘"}</button><button type="button" className="primary-button" disabled={busy !== "" || !draft.id} onClick={generateRevision}>{busy === "revise" ? "生成中…" : "生成下一版脚本 / 分镜 / 清单"}</button></div>
+        <div><button type="button" className="secondary-button" disabled={busy !== ""} onClick={save}>{busy === "save" ? "保存中…" : "保存"}</button><button type="button" className="primary-button" disabled={busy !== "" || !draft.id} onClick={generateRevision}>{busy === "revise" ? "生成中…" : "生成下一版"}</button></div>
       </div>
     </section>
   );

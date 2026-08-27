@@ -101,7 +101,7 @@ export function DataMaintenancePanel() {
   return (
     <div className="maintenance-panel">
       <section className="maintenance-block">
-        <div><h3>本地配置备份</h3><p>备份 `.piance` 中的设置、灵感、待办、素材索引和发布记录。导出文件不包含明文 API Key。</p></div>
+        <div><h3>本地配置备份</h3><p>备份 `.piance` 中的设置、灵感、素材索引和发布记录。导出文件不包含明文 API Key。</p></div>
         <div className="maintenance-actions">
           <button type="button" className="settings-section-action" onClick={downloadBackup}><DownloadSimple size={16} />导出备份</button>
           <button type="button" className="settings-section-action secondary" onClick={() => restoreInput.current?.click()} disabled={Boolean(busy)}><UploadSimple size={16} />{busy === "restore" ? "恢复中" : "恢复备份"}</button>

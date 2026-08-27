@@ -1,4 +1,4 @@
-/** 本地 JSON 文件存储 — 给待办/灵感这类轻量本地数据用 */
+/** 本地 JSON 文件存储 - 给灵感等轻量本地数据使用 */
 
 import { readFile } from "node:fs/promises";
 import path from "node:path";

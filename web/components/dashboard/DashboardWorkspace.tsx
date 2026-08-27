@@ -5,18 +5,15 @@ import Link from "next/link";
 import { DashboardHeader } from "./DashboardHeader";
 import { TodayFocus } from "./TodayFocus";
 import { CurrentProjects } from "./CurrentProjects";
-import { TaskList } from "./TaskList";
 import type { DashboardData, DashboardProject, ProjectStage } from "./types";
-import type { Task } from "./types";
 import { readJsonResponse } from "../../lib/readJsonResponse";
 
 interface DashboardWorkspaceProps {
   initialNowIso: string;
   initialData?: DashboardData;
-  initialTasks?: Task[];
 }
 
-export function DashboardWorkspace({ initialNowIso, initialData, initialTasks }: DashboardWorkspaceProps) {
+export function DashboardWorkspace({ initialNowIso, initialData }: DashboardWorkspaceProps) {
   const [data, setData] = useState<DashboardData | null>(() => initialData ?? null);
   const [error, setError] = useState("");
   const [ideaOpen, setIdeaOpen] = useState(false);
@@ -78,14 +75,9 @@ export function DashboardWorkspace({ initialNowIso, initialData, initialTasks }:
 
       {error && <div className="dashboard-error">{error}</div>}
 
-      <div className="dashboard-command-deck">
-        <div className="dashboard-primary-column">
-          <TodayFocus project={focusProject} onCreateProject={openCreate} onRecordIdea={openIdea} />
-          <CurrentProjects projects={data?.projects || []} />
-        </div>
-        <aside className="dashboard-side-column" aria-label="今日待办">
-          <TaskList embedded compact initialTasks={initialTasks} />
-        </aside>
+      <div className="dashboard-primary-column">
+        <TodayFocus project={focusProject} onCreateProject={openCreate} onRecordIdea={openIdea} />
+        <CurrentProjects projects={data?.projects || []} />
       </div>
 
       {ideaOpen && (

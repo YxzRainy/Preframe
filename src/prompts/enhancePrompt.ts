@@ -3,6 +3,24 @@ export const EXECUTION_CONTEXT_FILES = {
   "10": ["01_项目概览.md", "03_口播脚本.md", "06_封面标题与发布文案.md", "08_内容质检报告.md", "09_成片执行稿.md"],
 } as const;
 
+export const QUALITY_REVIEW_CONTEXT_FILES = ["01_项目概览.md", "03_口播脚本.md", "06_封面标题与发布文案.md"] as const;
+
+export function productionContext(documents: Array<{ name: string; content: string }>): string {
+  const allowed = new Set(["01_项目概览.md", "03_口播脚本.md"]);
+  return documents
+    .filter((document) => allowed.has(document.name))
+    .map((document) => `===== ${document.name} =====\n${document.content.trim()}`)
+    .join("\n\n");
+}
+
+export function qualityReviewContext(documents: Array<{ name: string; content: string }>): string {
+  const allowed = new Set<string>(QUALITY_REVIEW_CONTEXT_FILES);
+  return documents
+    .filter((document) => allowed.has(document.name))
+    .map((document) => `===== ${document.name} =====\n${document.content.trim()}`)
+    .join("\n\n");
+}
+
 export function executionContext(documents: Array<{ name: string; content: string }>, number: "09" | "10"): string {
   const allowed = new Set<string>(EXECUTION_CONTEXT_FILES[number]);
   return documents

@@ -10,7 +10,10 @@ import { getWorkspaceStats } from "../../src/services/workspaceConfig";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "片策｜短视频前期策划工作台",
+  title: {
+    default: "片策｜工作台",
+    template: "片策｜%s",
+  },
   applicationName: "片策",
   description: "输入一个选题，创建短视频内容项目并生成前期策划包，包括项目概览、选题拆解、口播脚本、分镜与剪辑节奏、拍摄清单、封面标题与发布文案、视觉参考提示词和内容质检报告。",
   manifest: "/manifest.webmanifest",
@@ -27,7 +30,7 @@ export const metadata: Metadata = {
     type: "website",
     locale: "zh_CN",
     siteName: "片策",
-    title: "片策｜短视频前期策划工作台",
+    title: "片策｜工作台",
     description: "输入一个选题，创建短视频内容项目并生成前期策划包，包括项目概览、选题拆解、口播脚本、分镜与剪辑节奏、拍摄清单、封面标题与发布文案、视觉参考提示词和内容质检报告。",
   },
 };

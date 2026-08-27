@@ -87,6 +87,11 @@ export async function readProjects(): Promise<ProjectSummary[]> {
     const generated = Array.isArray(metadata.generated) ? metadata.generated.filter((value) => typeof value === "string").length : 0;
     const fileCount = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).length;
     const completedCount = generated || (metadataStatus === "complete" ? Math.min(fileCount, PROJECT_DOCUMENT_DEFINITIONS.length) : 0);
+    const status: ProjectSummary["status"] = metadataStatus === "complete" && completedCount === PROJECT_DOCUMENT_DEFINITIONS.length
+      ? "complete"
+      : completedCount > 0
+        ? "partial"
+        : "failed";
     return {
       slug: project.name,
       name: typeof metadata.projectName === "string" && metadata.projectName.trim()
@@ -98,7 +103,7 @@ export async function readProjects(): Promise<ProjectSummary[]> {
       contentDomain: profile.contentDomain || "未记录",
       fileCount,
       completedCount,
-      status: metadataStatus || (completedCount === 10 ? "complete" : completedCount ? "partial" : "failed"),
+      status,
     };
   }));
   return summaries.sort((a, b) => Date.parse(b.generatedAt) - Date.parse(a.generatedAt));
@@ -143,10 +148,24 @@ export async function readProject(slug: string): Promise<ProjectDetail> {
     const errors = validateDocument(file.content, definition, input, canonicalFiles.filter((other) => other.name !== file.name));
     return { ...file, status: errors.length ? "failed" as const : "completed" as const, validationErrors: errors };
   });
+  const previousDocumentsStatus = metadata.documentsStatus && typeof metadata.documentsStatus === "object"
+    ? metadata.documentsStatus as Record<string, { documentStatus?: string; validationErrors?: string[] }>
+    : {};
   const documentsStatus = Object.fromEntries(PROJECT_DOCUMENT_DEFINITIONS.map((definition) => {
     const file = files.find((item) => item.name === definition.filename);
     const valid = file?.status === "completed";
-    return [definition.number, { id: definition.number, fileName: definition.filename, status: valid ? "completed" : "failed", generated: valid, repaired: false, failed: !valid, validationErrors: file?.validationErrors || ["文档缺失"] }];
+    const previous = previousDocumentsStatus[definition.number];
+    const repaired = valid && previous?.documentStatus === "repaired";
+    return [definition.number, {
+      id: definition.number,
+      fileName: definition.filename,
+      status: valid ? "completed" : "failed",
+      documentStatus: valid ? repaired ? "repaired" : "generated" : previous?.documentStatus === "fallback" ? "fallback" : "failed",
+      generated: valid,
+      repaired,
+      failed: !valid,
+      validationErrors: valid ? file?.validationErrors || [] : previous?.validationErrors?.length ? previous.validationErrors : ["文档缺失"],
+    }];
   }));
   const completedCount = Object.values(documentsStatus).filter((item) => item.generated).length;
   metadata.documentsStatus = documentsStatus;

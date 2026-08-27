@@ -91,7 +91,7 @@ export const CORE_PROJECT_DOCUMENT_DEFINITIONS = [
     parts: ["AI 味", "平台风险", "可行性"],
     fallbackCopy: ["AI 味、夸张承诺与平台风险", "原表达/场景、问题、可直接替换的新句子与优先级"],
     minLength: 600,
-    // 08 用质检表格验证（validateQualityCheckReportMarkdown），不用二级标题校验
+    // 08 使用专用质检表格与发布结论校验，不强制固定二级标题。
     requiredSections: [] as unknown as readonly string[],
   },
 ] as const;

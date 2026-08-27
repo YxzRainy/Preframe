@@ -1,6 +1,6 @@
 import { PublishCenter } from "../../components/publisher/PublishCenter";
 
-export const metadata = { title: "矩阵发布中心 · 片策" };
+export const metadata = { title: "发布" };
 
 export default function PublishPage() {
   return (

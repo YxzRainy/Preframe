@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Crosshair, FolderOpen, GearSix, ListChecks, MagnifyingGlass, Tag } from "@phosphor-icons/react";
+import { CaretDown, Crosshair, FolderOpen, GearSix, ListChecks, MagnifyingGlass } from "@phosphor-icons/react";
 import type { MediaAsset, ShotAssetLink } from "../../src/types/mediaAsset";
 import { readJsonResponse } from "../lib/readJsonResponse";
 
@@ -219,6 +219,7 @@ export function ShotMediaBar({ slug, batchSuggestions, onLinksRefresh }: ShotMed
       const cap = data.capability === "full" ? "（ffprobe 已启用）" : "（ffprobe 缺失，基础信息）";
       setNotice(`扫描完成：新增 ${data.newCount ?? 0} 个稳定素材 ${cap}`);
       await handleMatchProject();
+      await handleShotMatch();
     } catch (err) {
       setError(err instanceof Error ? err.message : "扫描失败。");
     } finally {
@@ -302,21 +303,17 @@ export function ShotMediaBar({ slug, batchSuggestions, onLinksRefresh }: ShotMed
   return (
     <div className="shot-media-bar">
       <div className="shot-media-controls">
-        <button type="button" className="secondary-button media-action-btn" disabled={scanning} onClick={handleScan}>
-          {scanning ? <span className="spinner dark" /> : <><MagnifyingGlass size={15} weight="bold" /> 扫描素材</>}
+        <button type="button" className="primary-button media-action-btn" disabled={scanning || matching || shotMatching} onClick={handleScan}>
+          {scanning || matching || shotMatching ? <span className="spinner" /> : <><MagnifyingGlass size={15} weight="bold" /> 同步并匹配素材</>}
         </button>
-        <button type="button" className="secondary-button media-action-btn" disabled={matching} onClick={handleMatchProject} title="重新匹配素材到项目">
-          {matching ? <span className="spinner dark" /> : <><Tag size={15} weight="fill" /> 归项目</>}
-        </button>
-        <button type="button" className="primary-button media-action-btn" disabled={shotMatching} onClick={handleShotMatch} title="匹配素材到镜头">
-          {shotMatching ? <span className="spinner" /> : <><Crosshair size={15} weight="bold" /> 匹配镜头</>}
-        </button>
-        <button type="button" className="secondary-button media-action-btn" disabled={planBusy} onClick={handleEditPlan}>
-          {planBusy ? <span className="spinner dark" /> : <><ListChecks size={15} weight="fill" /> 准备剪辑</>}
-        </button>
-        <button type="button" className="secondary-button media-action-btn" onClick={() => setPrefsOpen((v) => !v)}>
-          <GearSix size={15} weight="fill" /> {prefsOpen ? "收起目录配置" : "监听目录"}
-        </button>
+        <details className="media-tools-menu">
+          <summary><CaretDown size={14} weight="bold" /> 更多素材操作</summary>
+          <div>
+            <button type="button" disabled={shotMatching} onClick={handleShotMatch}>{shotMatching ? "匹配中…" : <><Crosshair size={15} weight="bold" />重新匹配镜头</>}</button>
+            <button type="button" disabled={planBusy} onClick={handleEditPlan}>{planBusy ? "生成中…" : <><ListChecks size={15} weight="fill" />生成剪辑清单</>}</button>
+            <button type="button" onClick={() => setPrefsOpen((v) => !v)}><GearSix size={15} weight="fill" />{prefsOpen ? "收起目录配置" : "设置监听目录"}</button>
+          </div>
+        </details>
       </div>
 
       {error && <div className="media-bar-error">{error}</div>}
@@ -573,7 +570,7 @@ export function MissingShotsBar({ total, withAsset, missingCount, filterMissing,
   return (
     <div className="media-missing-bar">
       <span className="media-missing-text">
-        {total} 个镜头 · {withAsset} 个已有素材 · <strong className={missingCount > 0 ? "missing-strong" : ""}>{missingCount} 个还缺</strong>
+        <strong className={missingCount > 0 ? "missing-strong" : ""}>{missingCount > 0 ? `${missingCount} 个镜头缺素材` : "素材已齐"}</strong>
       </span>
       {missingCount > 0 && (
         <button

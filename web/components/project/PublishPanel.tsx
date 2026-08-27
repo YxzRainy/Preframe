@@ -89,8 +89,8 @@ export function PublishPanel({ slug }: PublishPanelProps) {
     <section className="publish-panel" aria-label="发布准备与复盘">
       <header className="project-publish-header">
         <div>
-          <h3>发布准备与复盘</h3>
-          <p>按平台校验文案、封面、视频和账号，导出后记录发布结果。</p>
+          <h3>发布</h3>
+          <p>准备内容、完成检查，然后记录已发布的视频。</p>
         </div>
         <button type="button" className="primary-button" onClick={() => setCreateOpen(true)}>
           <Plus size={15} weight="bold" /> 新建发布准备
@@ -101,8 +101,8 @@ export function PublishPanel({ slug }: PublishPanelProps) {
         <div className="project-publish-loading"><SpinnerGap size={18} className="spin-icon" /> 正在读取发布准备</div>
       ) : preparations.length === 0 ? (
         <div className="project-publish-empty">
-          <strong>尚未创建发布准备</strong>
-          <span>选择成片与目标平台后，系统会从项目文档生成各平台文案。</span>
+          <strong>还没有发布准备</strong>
+          <span>选择成片和平台，开始整理可直接发布的内容。</span>
         </div>
       ) : (
         <div className="project-preparation-workspace">
@@ -124,14 +124,14 @@ export function PublishPanel({ slug }: PublishPanelProps) {
 
       <div className="project-review-section">
         <div className="project-review-heading">
-          <span>发布后复盘</span>
-          <p>发布记录可由上方平台任务自动带入，也可以手动补充。</p>
+          <span>发布记录</span>
+          <p>录入发布时间后，项目会自动标为已发布。</p>
         </div>
         <div className="publish-panel-body">
           <div className="publish-row">
             <label>
               <span>发布平台</span>
-              <input type="text" value={data.platform || ""} onChange={(event) => set("platform", event.target.value)} placeholder="小红书 / 抖音 / 视频号" />
+              <input type="text" value={data.platform || ""} onChange={(event) => set("platform", event.target.value)} placeholder="例如：小红书" />
             </label>
             <label>
               <span>发布时间</span>
@@ -139,18 +139,22 @@ export function PublishPanel({ slug }: PublishPanelProps) {
             </label>
           </div>
           <label>
-            <span>视频链接</span>
+            <span>发布链接</span>
             <input type="url" value={data.publishUrl || ""} onChange={(event) => set("publishUrl", event.target.value)} placeholder="https://" />
           </label>
-          <div className="publish-row publish-row-4">
-            <label><span>播放量</span><input type="number" min="0" value={data.views ?? ""} onChange={(event) => set("views", event.target.value ? Number(event.target.value) : undefined)} /></label>
-            <label><span>点赞</span><input type="number" min="0" value={data.likes ?? ""} onChange={(event) => set("likes", event.target.value ? Number(event.target.value) : undefined)} /></label>
-            <label><span>收藏</span><input type="number" min="0" value={data.favorites ?? ""} onChange={(event) => set("favorites", event.target.value ? Number(event.target.value) : undefined)} /></label>
-            <label><span>评论</span><input type="number" min="0" value={data.comments ?? ""} onChange={(event) => set("comments", event.target.value ? Number(event.target.value) : undefined)} /></label>
-          </div>
-          <label><span>完播率 (%)</span><input type="number" min="0" max="100" value={data.completionRate ?? ""} onChange={(event) => set("completionRate", event.target.value ? Number(event.target.value) : undefined)} /></label>
-          <label><span>复盘备注</span><textarea rows={3} value={data.reviewNote || ""} onChange={(event) => set("reviewNote", event.target.value)} placeholder="哪些有效？哪些可以改进？" /></label>
-          <label><span>下一版选题</span><textarea rows={2} value={data.nextTopic || ""} onChange={(event) => set("nextTopic", event.target.value)} placeholder="把复盘结论沉淀为下一版选题" /></label>
+          <details className="publish-optional-fields">
+            <summary>补充表现数据（可选）</summary>
+            <div className="publish-optional-body">
+              <div className="publish-row publish-row-4">
+                <label><span>播放</span><input type="number" min="0" value={data.views ?? ""} onChange={(event) => set("views", event.target.value ? Number(event.target.value) : undefined)} /></label>
+                <label><span>点赞</span><input type="number" min="0" value={data.likes ?? ""} onChange={(event) => set("likes", event.target.value ? Number(event.target.value) : undefined)} /></label>
+                <label><span>收藏</span><input type="number" min="0" value={data.favorites ?? ""} onChange={(event) => set("favorites", event.target.value ? Number(event.target.value) : undefined)} /></label>
+                <label><span>评论</span><input type="number" min="0" value={data.comments ?? ""} onChange={(event) => set("comments", event.target.value ? Number(event.target.value) : undefined)} /></label>
+              </div>
+              <label className="publish-completion-field"><span>完播率 (%)</span><input type="number" min="0" max="100" value={data.completionRate ?? ""} onChange={(event) => set("completionRate", event.target.value ? Number(event.target.value) : undefined)} /></label>
+              <label><span>这次的结论</span><textarea rows={3} value={data.reviewNote || ""} onChange={(event) => set("reviewNote", event.target.value)} placeholder="只记录下次会用到的判断。" /></label>
+            </div>
+          </details>
           <div className="publish-actions">
             <button type="button" className="primary-button" onClick={save} disabled={saving}>{saving ? "保存中…" : "保存发布复盘"}</button>
           </div>

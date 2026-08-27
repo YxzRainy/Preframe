@@ -8,7 +8,6 @@ import { ResultTabs, type ResultFile } from "./ResultTabs";
 import {
   GenerationProgressModal,
   initialGenerationProgress,
-  progressFromFiles,
   type GenerationJobView,
   type GenerationProgressItem,
   type GenerationUiStatus,
@@ -18,7 +17,20 @@ import { ApiPayloadError, readJsonResponse } from "../lib/readJsonResponse";
 import { ModelConfigModal } from "./ModelConfigModal";
 import { PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinitions";
 
-interface GenerateResponse { success: boolean; projectSlug: string; projectName?: string; files: ResultFile[]; partial?: boolean; failedStage?: string; error?: string; errorCode?: string; cancelled?: boolean; job?: GenerationJobView; }
+interface GenerateResponse {
+  success: boolean;
+  projectSlug: string;
+  projectName?: string;
+  files: ResultFile[];
+  status?: "complete" | "partial" | "failed";
+  documentsStatus?: Record<string, { generated?: boolean; validationErrors?: string[] }>;
+  failedDocuments?: Array<{ id: string; fileName: string; validationErrors: string[] }>;
+  failedStage?: string;
+  error?: string;
+  errorCode?: string;
+  cancelled?: boolean;
+  job?: GenerationJobView;
+}
 interface PublicModelStatus { providerLabel: string; model: string; configured: boolean; }
 
 const initialForm: NewTaskFormData = { projectName: "", topic: "", platform: "小红书", contentSubject: "", contentDomain: "", style: "专业但通俗", targetUser: "", extra: "" };
@@ -33,6 +45,7 @@ const GENERATION_STAGE_LABELS: Record<GenerationUiStatus, string> = {
   generatingPublishCopy: "生成发布承接话术",
   writing: "写入本地文件",
   paused: "生成已暂停",
+  partial: "部分文档已生成",
   completed: "完成",
   cancelled: "已撤销",
   failed: "生成失败",
@@ -252,7 +265,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
     let active = true;
     let polling = false;
     let interval: number | undefined;
-    const terminalStatuses = new Set<GenerationUiStatus>(["completed", "cancelled", "failed"]);
+    const terminalStatuses = new Set<GenerationUiStatus>(["partial", "completed", "cancelled", "failed"]);
     const poll = async () => {
       if (polling || document.visibilityState === "hidden") return;
       polling = true;
@@ -315,18 +328,6 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
         setGenerationJob(data.job);
         if (data.job.generationProgress?.length) setGenerationProgress(data.job.generationProgress);
       }
-      if (data.partial) {
-        const durationLabel = finishGenerationTimer(data.job);
-        const displayName = data.projectName || form.projectName || form.topic;
-        setFiles(data.files || []); setProjectSlug(data.projectSlug); setActiveName(data.files?.[0]?.name || ""); setDrawerOpen(false);
-        setProjectStatus("partial");
-        setGenerationProgress(progressFromFiles((data.files || []).map((file) => file.name)));
-        const availableCount = data.files?.length || 0;
-        const failedCount = TOTAL_DOCUMENTS - availableCount;
-        setGenerationIssue(`生成未完成。本次运行：${durationLabel}。${availableCount}/${TOTAL_DOCUMENTS} 可用，${failedCount} 份需重新生成。${data.error || ""}`);
-        window.dispatchEvent(new CustomEvent("piance-current-project", { detail: { title: displayName, status: `部分生成 · ${availableCount}/${TOTAL_DOCUMENTS} 可用`, tone: "warning", fileCount: availableCount } }));
-        return;
-      }
       if (!response.ok || !data.success) {
         const failure = new Error(data.error || "生成失败，请稍后重试。") as Error & { code?: string };
         failure.code = data.errorCode;
@@ -334,13 +335,27 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
       }
       const durationLabel = finishGenerationTimer(data.job);
       const displayName = data.projectName || form.projectName || form.topic;
+      const status = data.status || (data.files.length === TOTAL_DOCUMENTS ? "complete" : data.files.length ? "partial" : "failed");
       setFiles(data.files); setProjectSlug(data.projectSlug); setActiveName(data.files[0]?.name || ""); setDrawerOpen(false); setSuccessNotice(true);
-      setProjectStatus("complete");
+      setProjectStatus(status);
       setSuccessDurationLabel(durationLabel);
-      setGenerationProgress(progressFromFiles(data.files.map((file) => file.name)));
+      setGenerationProgress(initialGenerationProgress().map((item) => {
+        const documentStatus = data.documentsStatus?.[item.id];
+        if (documentStatus?.generated || data.files.some((file) => file.name === item.fileName)) return { ...item, status: "completed" as const };
+        return { ...item, status: "failed" as const, message: documentStatus?.validationErrors?.join("；") };
+      }));
+      setGenerationIssue(status === "complete"
+        ? ""
+        : `本次运行已结束，用时 ${durationLabel}。${data.files.length}/${TOTAL_DOCUMENTS} 份文档可用；失败项已保留，可进入项目继续重试。`);
+      setSuccessNotice(status === "complete");
       window.localStorage.removeItem(CREATE_PROJECT_DRAFT_KEY);
       setDraftSaved(false);
-      window.dispatchEvent(new CustomEvent("piance-current-project", { detail: { title: displayName, status: `策划包已生成 · ${data.files.length}/${TOTAL_DOCUMENTS} 已完成`, tone: "ready", fileCount: data.files.length } }));
+      window.dispatchEvent(new CustomEvent("piance-current-project", { detail: {
+        title: displayName,
+        status: status === "complete" ? `策划包已生成 · ${data.files.length}/${TOTAL_DOCUMENTS} 已完成` : `部分生成 · ${data.files.length}/${TOTAL_DOCUMENTS} 可用`,
+        tone: status === "complete" ? "ready" : "warning",
+        fileCount: data.files.length,
+      } }));
       if (presentation === "modal") router.push(`/projects/${encodeURIComponent(data.projectSlug)}`);
     } catch (caught) {
       if (cancelledJobIdRef.current === jobId || (caught instanceof DOMException && caught.name === "AbortError")) return;
@@ -409,7 +424,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
     }
   }
 
-  const hasProject = Boolean(projectSlug && files.length);
+  const hasProject = Boolean(projectSlug);
 
   if (presentation === "modal") {
     return (
@@ -450,7 +465,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
                 <>
                   <span className="doc-project-name">{form.projectName || form.topic || "内容项目"}</span>
                   <span className={`doc-project-status ${projectStatus}`}>
-                    {projectStatus === "complete" ? `${files.length}/${TOTAL_DOCUMENTS} 已完成` : projectStatus === "partial" ? `部分可用` : "生成失败"}
+                    {projectStatus === "complete" ? `${files.length}/${TOTAL_DOCUMENTS} 已完成` : projectStatus === "partial" ? `${files.length}/${TOTAL_DOCUMENTS} 可用` : "待重试"}
                   </span>
                 </>
               ) : (
@@ -461,7 +476,8 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
               {hasProject && (
                 <>
                   <Link className="doc-bar-btn" href={`/projects/${encodeURIComponent(projectSlug)}`}>打开项目页</Link>
-                  <button className="doc-bar-btn" type="button" onClick={() => setDrawerOpen(true)}>重新生成</button>
+                  {projectStatus !== "complete" && <Link className="doc-bar-btn" href={`/projects/${encodeURIComponent(projectSlug)}`}>继续失败项</Link>}
+                  <button className="doc-bar-btn" type="button" onClick={() => setDrawerOpen(true)}>新建项目</button>
                   <span className="doc-bar-divider" />
                 </>
               )}

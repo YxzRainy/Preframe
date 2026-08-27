@@ -6,13 +6,13 @@ import {
   GenerationStageError,
   type GenerationJobStatus,
   type GenerationStatusUpdate,
-  PartialGenerationError,
 } from "../../../../src/services/contentWorkflow";
 import type { GenerateInput } from "../../../../src/prompts/generatePrompt";
 import { resolveContentProfile } from "../../../../src/utils/contentProfile";
 import { removeTempProjectDirectory } from "../../../../src/services/projectManager";
 import { PROJECT_DOCUMENT_DEFINITIONS } from "../../../../src/utils/documentDefinitions";
 import { formatDuration } from "../../../../src/utils/generationTiming";
+import type { GenerationModelCallRecord } from "../../../../src/services/documentGeneration";
 import { markIdeaConverted } from "../../../../src/services/ideaManager";
 import { consumeFreeTrial, getTrialStatus } from "../../../lib/supabase/trial";
 import { readRequestJson } from "../_utils";
@@ -32,6 +32,7 @@ interface GenerationJobSnapshot {
   tempDir?: string;
   abortController: AbortController;
   timings: Array<{ label: string; durationMs: number }>;
+  modelCalls: GenerationModelCallRecord[];
   generationProgress: GenerationDocumentProgress[];
   startedAt: string;
   endedAt?: string;
@@ -90,6 +91,7 @@ function createJob(jobId: string): GenerationJobSnapshot {
     resumeWaiters: [],
     abortController: new AbortController(),
     timings: [],
+    modelCalls: [],
     generationProgress: initialGenerationProgress(),
     startedAt,
     updatedAt: startedAt,
@@ -101,7 +103,7 @@ function createJob(jobId: string): GenerationJobSnapshot {
 function updateJob(job: GenerationJobSnapshot, update: GenerationStatusUpdate): void {
   if (update.status === "paused") {
     job.status = "paused";
-  } else if (job.pauseRequested && update.status !== "failed" && update.status !== "cancelled" && update.status !== "completed") {
+  } else if (job.pauseRequested && update.status !== "failed" && update.status !== "partial" && update.status !== "cancelled" && update.status !== "completed") {
     job.resumeStatus = update.status;
     job.status = "paused";
   } else {
@@ -138,13 +140,14 @@ function publicJob(job: GenerationJobSnapshot) {
     progress: job.progress,
     message: job.message,
     timings: job.timings,
+    modelCalls: job.modelCalls,
     generationProgress: job.generationProgress,
     startedAt: job.startedAt,
     endedAt: job.endedAt,
     durationMs: job.durationMs,
     durationLabel: job.durationLabel,
     updatedAt: job.updatedAt,
-    canPause: !["idle", "completed", "cancelled", "failed"].includes(job.status),
+    canPause: !["idle", "partial", "completed", "cancelled", "failed"].includes(job.status),
     canResume: job.status === "paused",
   };
 }
@@ -237,7 +240,7 @@ export async function GET(request: Request) {
     const jobId = new URL(request.url).searchParams.get("jobId") || "";
     const job = jobs.get(jobId);
     if (!job) {
-      return NextResponse.json({ ok: true, success: true, job: { jobId, status: "idle", currentDocument: "", progress: 0, message: "", timings: [], generationProgress: initialGenerationProgress(), startedAt: "" } });
+      return NextResponse.json({ ok: true, success: true, job: { jobId, status: "idle", currentDocument: "", progress: 0, message: "", timings: [], modelCalls: [], generationProgress: initialGenerationProgress(), startedAt: "" } });
     }
     return NextResponse.json({ ok: true, success: true, job: publicJob(job) });
   } catch (error) {
@@ -283,7 +286,7 @@ export async function PATCH(request: Request) {
     const action = body.action;
     const job = jobs.get(jobId);
     if (!job) return jsonError(new Error("生成任务不存在或服务已重启。"), "generate", 404);
-    if (["completed", "cancelled", "failed"].includes(job.status)) {
+    if (["partial", "completed", "cancelled", "failed"].includes(job.status)) {
       return jsonError(new Error("当前任务已经结束，无法修改状态。"), "generate", 409);
     }
     if (action === "pause") {
@@ -352,6 +355,9 @@ export async function POST(request: Request) {
       onTiming: (label, durationMs) => {
         job?.timings.push({ label, durationMs });
       },
+      onModelCall: (record) => {
+        job?.modelCalls.push(record);
+      },
     });
     if (job.cancelled) throw new GenerationCancelledError();
     if (sourceIdeaId) {
@@ -362,36 +368,22 @@ export async function POST(request: Request) {
       }
     }
     finishJob(job);
-    updateJob(job, { status: "completed", currentDocument: "10 份文档", progress: 100 });
+    updateJob(job, {
+      status: result.status === "complete" ? "completed" : result.status,
+      currentDocument: result.status === "complete" ? "10 份文档" : "生成已结束",
+      progress: result.files.length * 10,
+      message: result.status === "complete"
+        ? ""
+        : result.deadlineReached
+          ? `任务达到 06:00 截止时间，已保存 ${result.files.length}/10 份通过校验的文档。`
+          : `${result.files.length}/10 份文档可用，可在项目中继续生成失败项。`,
+    });
     return NextResponse.json({ ok: true, success: true, job: publicJob(job), ...result });
   } catch (error) {
     if (error instanceof GenerationCancelledError) {
       if (job) finishJob(job);
       if (job) updateJob(job, { status: "cancelled", currentDocument: "已撤销", progress: 0, message: "已撤销生成，本地临时文件已清理。" });
       return NextResponse.json({ ok: false, success: false, cancelled: true, error: "已撤销生成，本地临时文件已清理。", stage: "generate", job: job ? publicJob(job) : undefined }, { status: 499 });
-    }
-    if (error instanceof PartialGenerationError) {
-      if (sourceIdeaId) {
-        try {
-          await markIdeaConverted(sourceIdeaId, error.projectSlug);
-        } catch (markError) {
-          console.warn(`灵感转换状态写入失败：${markError instanceof Error ? markError.message : String(markError)}`);
-        }
-      }
-      if (job) finishJob(job);
-      if (job) updateJob(job, { status: "failed", currentDocument: "部分文档生成失败", progress: Math.round((error.files.length / 10) * 100), message: error.message });
-      return NextResponse.json({
-        ok: false,
-        success: false,
-        partial: true,
-        error: error.message,
-        stage: "generate",
-        failedStage: error.failedStage,
-        projectSlug: error.projectSlug,
-        projectName: error.projectName,
-        files: error.files,
-        job: job ? publicJob(job) : undefined,
-      });
     }
     if (error instanceof GenerationStageError) {
       return jsonError(error, error.stage, 400, job);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ArrowsClockwise, Camera, CheckCircle, FilmSlate, FlagCheckered, Scissors, WarningDiamond } from "@phosphor-icons/react";
+import { ArrowsClockwise, Camera, CheckCircle, DotsThree, FilmSlate, FlagCheckered, WarningDiamond } from "@phosphor-icons/react";
 import type { ShotTask, ShotTaskStatus } from "../../src/types/shotTask";
 import type { MediaAsset } from "../../src/types/mediaAsset";
 import type { ShootingFeedback } from "../../src/types/shootingFeedback";
@@ -50,7 +50,7 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
   const [notice, setNotice] = useState("");
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   // 镜头视图 / 剪辑准备工作台 视图切换
-  const [view, setView] = useState<"shots" | "editing">("shots");
+  const [view, setView] = useState<"shots" | "feedback" | "editing">("shots");
 
   // 临时编辑状态
   const [editingNotes, setEditingNotes] = useState("");
@@ -227,7 +227,6 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
   // 统计数据
   const totalCount = shotTasks.length;
   const doneCount = shotTasks.filter((t) => t.status === "done").length;
-  const progressPct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
 
   // 素材统计：已确认主素材的镜头数 / 缺失镜头数
   const confirmedShots = new Set(links.filter((l) => l.status === "confirmed").map((l) => l.shotTaskId));
@@ -256,58 +255,35 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
       {/* 顶部指标与控制栏 */}
       <header className="shot-topbar">
         <div className="shot-topbar-title">
-          <span>PRODUCTION BOARD</span>
           <h2><FilmSlate size={23} weight="fill" /> 镜头执行</h2>
-          <p>从分镜到素材确认，按镜头推进拍摄进度。</p>
         </div>
-        <div className="shot-metrics">
-          <div className="metric-chip">
-            <small>镜头总数</small>
-            <strong>{totalCount}</strong>
-          </div>
-          <div className="metric-chip">
-            <small>已完成</small>
-            <strong>{doneCount} / {totalCount}</strong>
-          </div>
-          <div className="metric-chip">
-            <small>准备进度</small>
-            <strong>{progressPct}%</strong>
-            <span className="metric-progress-bar">
-              <i style={{ width: `${progressPct}%` }} />
-            </span>
-          </div>
-          <div className="metric-chip sub">
-            <small>素材就绪</small>
-            <span>{withAssetCount} / {totalCount} 镜头{reshootCount ? ` · ${reshootCount} 需补拍` : ""}</span>
-          </div>
+        <div className="shot-topbar-summary" aria-label="镜头执行摘要">
+          <span>{doneCount}/{totalCount} 已完成</span>
+          <span>{withAssetCount}/{totalCount} 素材就绪</span>
+          {reshootCount > 0 && <span>{reshootCount} 需补拍</span>}
         </div>
 
         <div className="shot-topbar-actions">
-          <button
-            type="button"
-            className={view === "editing" ? "primary-button" : "secondary-button"}
-            onClick={() => setView((v) => (v === "editing" ? "shots" : "editing"))}
-            title="进入剪辑准备工作台：素材整理 / Proxy / 路径管理（不做剪辑）"
-          >
-            {view === "editing" ? <ArrowLeft size={16} weight="bold" /> : <Scissors size={16} weight="bold" />}
-            <span>{view === "editing" ? "返回镜头" : "准备剪辑"}</span>
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={rebuilding}
-            onClick={handleRebuild}
-            title="从当前 Markdown 文档重新解析镜头任务（不修改 Markdown 文档）"
-          >
-            {rebuilding ? <span className="spinner dark" /> : <><ArrowsClockwise size={16} weight="bold" /><span>重新构建</span></>}
-          </button>
+          <div className="shot-view-tabs" role="tablist" aria-label="镜头执行视图">
+            <button type="button" role="tab" aria-selected={view === "shots"} className={view === "shots" ? "active" : ""} onClick={() => setView("shots")}>镜头</button>
+            <button type="button" role="tab" aria-selected={view === "feedback"} className={view === "feedback" ? "active" : ""} onClick={() => setView("feedback")}>复盘</button>
+            <button type="button" role="tab" aria-selected={view === "editing"} className={view === "editing" ? "active" : ""} onClick={() => setView("editing")}>剪辑</button>
+          </div>
+          <details className="shot-topbar-menu">
+            <summary><DotsThree size={19} weight="bold" /> 更多</summary>
+            <button type="button" disabled={rebuilding} onClick={handleRebuild}>
+              {rebuilding ? <span className="spinner dark" /> : <><ArrowsClockwise size={16} weight="bold" />重新构建镜头</>}
+            </button>
+          </details>
         </div>
       </header>
 
       {view === "editing" ? (
         <EditingWorkbench slug={slug} onBack={() => setView("shots")} />
+      ) : view === "feedback" ? (
+        <ShootingFeedbackPanel slug={slug} shotTasks={shotTasks} onChanged={() => { void fetchFeedbackState(); void loadShots(); }} />
       ) : (
-        <>
+        <div className="shot-execution-panel">
       {/* 素材控制栏：扫描 / 归项目 / 匹配镜头 / 批量确认 / 剪辑清单 */}
       <ShotMediaBar
         slug={slug}
@@ -596,8 +572,7 @@ export function ShotExecutionWorkspace({ slug }: ShotExecutionWorkspaceProps) {
           </div>
         </div>
       )}
-      <ShootingFeedbackPanel slug={slug} shotTasks={shotTasks} onChanged={() => { void fetchFeedbackState(); void loadShots(); }} />
-        </>
+        </div>
       )}
     </div>
   );

@@ -1,6 +1,6 @@
 import { IdeaInbox } from "../../components/ideas/IdeaInbox";
 
-export const metadata = { title: "灵感收件箱 · 片策" };
+export const metadata = { title: "灵感" };
 
 export default function IdeasPage() {
   return (

@@ -13,6 +13,7 @@ export type GenerationUiStatus =
   | "generatingPublishCopy"
   | "writing"
   | "paused"
+  | "partial"
   | "completed"
   | "cancelled"
   | "failed";

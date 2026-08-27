@@ -11,7 +11,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     const documents = Array.isArray(body.documents)
       ? body.documents.filter((value): value is string => typeof value === "string" && /^\d{1,2}$/u.test(value))
       : [];
-    const result = await regenerateProjectDocuments(slug, documents);
+    const result = await regenerateProjectDocuments(slug, documents, { signal: request.signal });
     return NextResponse.json({ ok: true, success: true, ...result });
   } catch (error) {
     return apiError(error, "generate", "异常文档重新生成失败。", 400);

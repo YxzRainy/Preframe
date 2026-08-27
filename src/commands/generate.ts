@@ -65,5 +65,7 @@ export async function runGenerate(): Promise<void> {
 
   console.log("\n正在创建内容项目并生成前期策划包，请稍候……");
   const result = await generateProject(input);
-  console.log(`\n前期策划包已生成：${result.projectSlug}`);
+  console.log(result.status === "complete"
+    ? `\n前期策划包已生成：${result.projectSlug}`
+    : `\n项目已保存：${result.projectSlug}（${result.files.length}/10 份可用，可继续重试失败文档）`);
 }
