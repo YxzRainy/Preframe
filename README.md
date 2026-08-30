@@ -26,7 +26,7 @@ npm install
 npm run dev
 ```
 
-浏览器打开 [http://localhost:3000](http://localhost:3000)。首页可以填写选题并生成三份核心工作稿；“历史项目”页面读取本地 `output` 目录；项目详情页支持 Markdown 编辑、版本归档、导出、素材扫描和镜头执行。镜头任务直接从 `02_拍摄执行稿.md` 的镜头执行表解析。拍摄复盘会生成一份同步后的下一版拍摄执行稿，并保留可匹配镜头的现场状态、素材判断与备注。`03_发布与复盘.md` 可直接用于封面生成；历史视觉提示词文档继续兼容。
+浏览器打开 [http://localhost:3000](http://localhost:3000)。首页可以填写选题并生成三份核心工作稿；“历史项目”页面读取本地 `output` 目录；项目详情页支持 Markdown 编辑、版本归档、导出、素材扫描和镜头执行。镜头任务直接从 `02_拍摄执行稿.md` 的镜头执行表解析。拍摄复盘会生成一份同步后的下一版拍摄执行稿，并保留可匹配镜头的现场状态、素材判断与备注。`03_发布与复盘.md` 可自动提炼为可复制的封面视觉提示词；历史视觉提示词文档继续兼容。
 
 生产模式本地运行：
 
@@ -36,26 +36,6 @@ npm run web
 ```
 
 Web API Route 从本机 `.env` 读取 DeepSeek 配置。也可以在“设置 → 模型”中输入自己的 Key，应用会将它写回本机 `.env`，不会保存到浏览器 `localStorage`。Web 端固定使用 `deepseek-v4-flash`；素材扫描和项目文件操作都针对运行片策的这台电脑。
-
-## 配置封面图片生成 API（可选）
-
-封面模块兼容常见的 OpenAI Images API 请求与返回格式。所有配置仍只保存在服务端 `.env`：
-
-```env
-IMAGE_API_KEY=你的图片生成_API_Key
-IMAGE_API_URL=https://api.example.com/v1/images/generations
-IMAGE_MODEL=你的图片生成模型名
-IMAGE_API_SIZE_FIELD=size
-IMAGE_API_EXTRA_BODY={}
-```
-
-- `IMAGE_API_URL` 填写完整的图片生成接口地址。
-- `IMAGE_API_SIZE_FIELD` 默认是 `size`，会发送 `1024x1024` 等尺寸；若供应商使用比例参数，可改为 `aspect_ratio`，此时发送 `3:4`、`9:16` 等比例。
-- `IMAGE_API_EXTRA_BODY` 可填写供应商特有参数，例如 `{"quality":"high"}`。必须是单行 JSON 对象。
-- 接口响应支持 `data[0].b64_json`、`data[0].url` 以及常见的 `images[0]` 变体。
-- 支持 `1:1`、`3:4`、`4:3`、`9:16`、`16:9` 五种常用比例。
-
-生成的封面会保存在 `output/<项目>/covers/`。图片 API 未配置时，不影响策划生成、refine、scan 和其他 Web 功能。
 
 ## 配置 DeepSeek API
 
@@ -81,11 +61,11 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 ## 本地数据边界
 
 - `npm run dev` 和 `npm run web` 默认只监听 `127.0.0.1`，局域网和公网设备无法访问。
-- 项目文档与封面保存在本机 `output/` 或你选择的本地工作区。
+- 项目文档保存在本机 `output/` 或你选择的本地工作区。
 - 应用设置、灵感、素材索引和备份保存在本机 `.piance/`。
 - DeepSeek API Key 保存在本机 `.env`，不会写入项目输出、浏览器存储或配置备份。
 - 项目文件不会上传到片策自建云端，因为项目没有云端存储功能。
-- 使用 DeepSeek 或图片生成接口时，为完成生成所提交的文字提示和必要内容仍会发送给对应 API 供应商；如果需要完全离线，必须改用本地模型。
+- 使用 DeepSeek 时，为完成生成所提交的文字提示和必要内容会发送给对应 API 供应商；如果需要完全离线，必须改用本地模型。
 - 最终发布由用户在目标平台人工完成，再把真实链接和数据写回 `03_发布与复盘.md`。
 
 如果 API Key 缺失、网络失败、API 报错、模型返回为空或输出无法解析，CLI 会显示对应错误，不会写入不完整的项目。
@@ -134,8 +114,6 @@ output/
     02_拍摄执行稿.md
     02_拍摄执行稿_修改版.md        # 可选
     03_发布与复盘.md
-    covers/
-      cover_2026-08-28T15-30-00-000Z_3x4.png
     project.json
 ```
 

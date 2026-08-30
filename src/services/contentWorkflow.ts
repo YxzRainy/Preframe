@@ -1,4 +1,4 @@
-import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import type { GenerateInput } from "../prompts/generatePrompt.js";
@@ -13,7 +13,6 @@ import {
 import { scanAssets, assetsToMarkdown } from "./assetScanner.js";
 import { writeJson, writeMarkdown } from "./fileWriter.js";
 import { callModel, combineModelRequestSignal, loadModelConfig } from "./modelClient.js";
-import { generateImage, type CoverRatio } from "./imageClient.js";
 import {
   accountMemoryHasContent,
   accountMemorySnapshot,
@@ -127,11 +126,6 @@ export class GenerationStageError extends Error {
     this.name = "GenerationStageError";
     this.stage = stage;
   }
-}
-
-export interface GeneratedCover {
-  name: string;
-  ratio: CoverRatio;
 }
 
 function assertNotCancelled(options: GenerateProjectOptions): void {
@@ -732,25 +726,4 @@ export async function scanProjectAssets(projectSlug: string, assetPath: string):
   const name = "00_素材索引.md";
   await writeMarkdown(path.join(projectDir, name), content);
   return { name, content };
-}
-
-/** 根据视觉提示词生成封面，并持久化到当前项目 covers 目录。 */
-export async function generateProjectCover(
-  projectSlug: string,
-  prompt: string,
-  ratio: CoverRatio,
-): Promise<GeneratedCover> {
-  const projectDir = resolveProjectDirectory(projectSlug);
-  try {
-    if (!(await stat(projectDir)).isDirectory()) throw new Error("不是文件夹");
-  } catch (error) {
-    throw new Error(`项目不存在：${projectSlug}`, { cause: error });
-  }
-  const image = await generateImage(prompt, ratio);
-  const coversDir = path.join(projectDir, "covers");
-  await mkdir(coversDir, { recursive: true });
-  const safeRatio = ratio.replace(":", "x");
-  const name = `cover_${new Date().toISOString().replace(/[:.]/g, "-")}_${safeRatio}.${image.extension}`;
-  await writeFile(path.join(coversDir, name), image.bytes);
-  return { name, ratio };
 }

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { ArrowClockwise, WarningCircle } from "@phosphor-icons/react";
-import { AgentToolsPanel, type CoverSummary } from "./AgentToolsPanel";
+import { AgentToolsPanel } from "./AgentToolsPanel";
 import { DocumentWorkspace } from "./DocumentWorkspace";
 import { ProjectSidebar } from "./ProjectSidebar";
 import { ShotExecutionWorkspace } from "./ShotExecutionWorkspace";
@@ -22,21 +22,12 @@ interface ProjectDetail {
   name: string;
   metadata: Record<string, unknown>;
   files: ResultFile[];
-  covers: CoverSummary[];
 }
 
 function markdownSection(content: string, label: string): string {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(`(?:^|\\n)(?:#{2,6}\\s+|\\*\\*)${escaped}(?:\\*\\*)?\\s*([\\s\\S]*?)(?=\\n(?:#{2,6}\\s+|\\*\\*)|$)`, "m");
   return pattern.exec(content)?.[1]?.trim() ?? "";
-}
-
-function defaultCoverPrompt(content: string, useWholeDocument = false): string {
-  const visual = markdownSection(content, "封面视觉提示词") || markdownSection(content, "视觉提示词");
-  const negative = markdownSection(content, "负面提示词");
-  const source = visual || (useWholeDocument ? content : "");
-  const cleanedVisual = source.replace(/[—-]{2}ar\s+\d+\s*:\s*\d+(?:\s+--(?:v|style)\s+\S+)*/gi, "").trim();
-  return negative && cleanedVisual ? `${cleanedVisual}\n\n负面提示词：${negative}` : cleanedVisual;
 }
 
 function detailProjectStatus(fileCount: number, total: number): string {
@@ -142,7 +133,6 @@ export function ProjectDetailView({ slug }: { slug: string }) {
   const [loading, setLoading] = useState(true);
   const [refining, setRefining] = useState(false);
   const [autoRepairing, setAutoRepairing] = useState(false);
-  const [generatingCover, setGeneratingCover] = useState(false);
   const [regeneratingCoverPrompt, setRegeneratingCoverPrompt] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [migrating, setMigrating] = useState(false);
@@ -214,8 +204,9 @@ export function ProjectDetailView({ slug }: { slug: string }) {
   const isVisualPrompt = Boolean(activeFile && (isVisualPromptDocument(activeFile.name) || activeFile.name === "03_发布与复盘.md"));
 
   useEffect(() => {
-    if (isVisualPrompt && activeFile) setCoverPrompt(defaultCoverPrompt(activeFile.content, isVisualPromptDocument(activeFile.name)));
-  }, [activeFile?.name, isVisualPrompt]);
+    if (isVisualPrompt) void regenerateCoverPrompt();
+    else setCoverPrompt("");
+  }, [activeFile?.name, coverRatio, isVisualPrompt]);
 
   async function refine(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -270,13 +261,12 @@ export function ProjectDetailView({ slug }: { slug: string }) {
 
 
   async function regenerateCoverPrompt() {
-    if (!activeFile) return;
-    setRegeneratingCoverPrompt(true); setError(""); setNotice(""); setNoticeDetails([]);
+    setRegeneratingCoverPrompt(true); setError(""); setNotice(""); setNoticeDetails([]); setCoverPrompt("");
     try {
       const response = await fetch("/api/cover/prompt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: activeFile.content, ratio: coverRatio }),
+        body: JSON.stringify({ projectSlug: slug, ratio: coverRatio }),
       });
       const data = await readJsonResponse<{ prompt?: string; error?: string; errorCode?: string }>(response);
       if (!response.ok) {
@@ -285,25 +275,18 @@ export function ProjectDetailView({ slug }: { slug: string }) {
       }
       if (!data.prompt) throw new Error("封面提示词生成失败，未返回内容。");
       setCoverPrompt(data.prompt);
-      setNotice("已根据当前发布内容重新生成视觉提示词，可继续编辑后生成封面。");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "封面提示词生成失败。");
     } finally { setRegeneratingCoverPrompt(false); }
   }
 
-  async function createCover(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setGeneratingCover(true); setError(""); setNotice(""); setNoticeDetails([]);
+  async function copyCoverPrompt() {
     try {
-      const response = await fetch("/api/cover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectSlug: slug, prompt: coverPrompt, ratio: coverRatio }) });
-      const data = await readJsonResponse<{ cover: { name: string }; error?: string }>(response);
-      if (!response.ok) throw new Error(data.error || "封面生成失败。");
-      const newCover: CoverSummary = { name: data.cover.name, createdAt: new Date().toISOString() };
-      setProject((current) => current ? { ...current, covers: [newCover, ...(current.covers || [])] } : current);
-      setNotice(`封面已生成并保存：covers/${data.cover.name}`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "封面生成失败。");
-    } finally { setGeneratingCover(false); }
+      await navigator.clipboard.writeText(coverPrompt);
+      setNotice("封面提示词已复制，可粘贴到任意图片生成工具。");
+    } catch {
+      setError("复制失败，请手动选中提示词后复制。");
+    }
   }
 
   function download() {
@@ -477,17 +460,13 @@ export function ProjectDetailView({ slug }: { slug: string }) {
             onNoticeConfirm={() => { setNotice(""); setNoticeDetails([]); }}
           />
           {showCoverTools ? <AgentToolsPanel
-            slug={slug}
             coverPrompt={coverPrompt}
             coverRatio={coverRatio}
-            covers={project.covers || []}
-            generatingCover={generatingCover}
             regeneratingCoverPrompt={regeneratingCoverPrompt}
             disabled={refining || autoRepairing || regenerating}
-            onCoverPromptChange={setCoverPrompt}
             onRegenerateCoverPrompt={regenerateCoverPrompt}
             onCoverRatioChange={setCoverRatio}
-            onCreateCover={createCover}
+            onCopyCoverPrompt={copyCoverPrompt}
           /> : showRecoveryTools && selectedDefinition ? <FailedDocumentTools
             fileName={selectedDefinition.filename}
             reasons={selectedFailureReasons}
