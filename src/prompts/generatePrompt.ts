@@ -82,6 +82,7 @@ export function buildProjectBriefPrompt(input: GenerateInput, accountMemoryPromp
 }
 
 如果某项输入要求你自动判断，请结合选题和账号记忆直接补全为确定答案，不要把“自动判断”“请推断”或多个候选带入 JSON。用户明确写出的要求优先于账号记忆；已明确的字段保持原意。
+forbiddenExpressions 要区分“绝对化断言”和对绝对化的否定：“一定会成功”“所有人都适用”应禁止，但“不一定适用”“并非所有人都如此”属于风险限定，不应与 requiredElements 或 riskBoundaries 冲突。
 
 选题：${input.topic}
 内容主体：${input.contentSubject}

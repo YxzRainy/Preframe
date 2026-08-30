@@ -105,60 +105,66 @@ export function NewTaskDrawer({ open, form, loading, error, errorTitle = "生成
           </div>
         </section>
 
-        {preferencesOpen && (
-          <section className="create-preferences" aria-label="生成偏好">
-            <div className="create-preferences-heading">
-              <div>
-                <span>生成偏好</span>
-                <p>告诉片策，你希望第一版更像什么</p>
-              </div>
-              <small>{customPreferenceCount ? `已调整 ${customPreferenceCount} 项` : "可随时调整"}</small>
-            </div>
-
-            <div className="create-preference-grid">
-              <div className="create-preference-card">
-                <div className="create-preference-card-heading">
-                  <strong>发布平台</strong>
-                  <span>选择一个</span>
-                </div>
-                <p>决定标题、节奏和内容形态</p>
-                <div className="create-segmented-control" role="group" aria-label="发布平台">
-                  {PLATFORM_OPTIONS.map((platform) => (
-                    <button aria-pressed={form.platform === platform} className={form.platform === platform ? "active" : ""} type="button" onClick={() => onChange("platform", platform)} key={platform}>{platform === "自动判断" ? "自动" : platform}</button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="create-preference-card">
-                <div className="create-preference-card-heading">
-                  <strong>表达方式</strong>
-                  <span>选择一个</span>
-                </div>
-                <p>决定语言的气质和表达力度</p>
-                <div className="create-segmented-control" role="group" aria-label="表达方式">
-                  {STYLE_OPTIONS.map((style) => (
-                    <button aria-pressed={form.style === style.value} className={form.style === style.value ? "active" : ""} type="button" onClick={() => onChange("style", style.value)} key={style.value}>{style.label}</button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <label className="create-extra-field">
-              <div className="create-extra-heading">
+        <div
+          className={`create-preferences-reveal ${preferencesOpen ? "is-open" : ""}`}
+          aria-hidden={!preferencesOpen}
+          inert={!preferencesOpen}
+        >
+          <div className="create-preferences-reveal-inner">
+            <section className="create-preferences" aria-label="生成偏好">
+              <div className="create-preferences-heading">
                 <div>
-                  <span>必须遵守的限制 <em>可选</em></span>
-                  <small>写下时长、语气、禁用词等硬性要求</small>
+                  <span>生成偏好</span>
+                  <p>告诉片策，你希望第一版更像什么</p>
                 </div>
-                <small>{form.extra.trim() ? `${form.extra.trim().length} 字` : "不填写也可以"}</small>
+                <small>{customPreferenceCount ? `已调整 ${customPreferenceCount} 项` : "可随时调整"}</small>
               </div>
-              <textarea rows={2} value={form.extra} onChange={(event) => onChange("extra", event.target.value)} placeholder="例如：60 秒内，不要鸡汤，避免专业术语" />
-            </label>
-            <div className="create-preferences-foot">
-              <span>主体、领域和受众会从想法与账号记忆中推断。</span>
-              <button type="button" onClick={onClearDraft}>清空内容</button>
-            </div>
-          </section>
-        )}
+
+              <div className="create-preference-grid">
+                <div className="create-preference-card">
+                  <div className="create-preference-card-heading">
+                    <strong>发布平台</strong>
+                    <span>选择一个</span>
+                  </div>
+                  <p>决定标题、节奏和内容形态</p>
+                  <div className="create-segmented-control" role="group" aria-label="发布平台">
+                    {PLATFORM_OPTIONS.map((platform) => (
+                      <button aria-pressed={form.platform === platform} className={form.platform === platform ? "active" : ""} type="button" onClick={() => onChange("platform", platform)} key={platform}>{platform === "自动判断" ? "自动" : platform}</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="create-preference-card">
+                  <div className="create-preference-card-heading">
+                    <strong>表达方式</strong>
+                    <span>选择一个</span>
+                  </div>
+                  <p>决定语言的气质和表达力度</p>
+                  <div className="create-segmented-control" role="group" aria-label="表达方式">
+                    {STYLE_OPTIONS.map((style) => (
+                      <button aria-pressed={form.style === style.value} className={form.style === style.value ? "active" : ""} type="button" onClick={() => onChange("style", style.value)} key={style.value}>{style.label}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <label className="create-extra-field">
+                <div className="create-extra-heading">
+                  <div>
+                    <span>必须遵守的限制 <em>可选</em></span>
+                    <small>写下时长、语气、禁用词等硬性要求</small>
+                  </div>
+                  <small>{form.extra.trim() ? `${form.extra.trim().length} 字` : "不填写也可以"}</small>
+                </div>
+                <textarea rows={2} value={form.extra} onChange={(event) => onChange("extra", event.target.value)} placeholder="例如：60 秒内，不要鸡汤，避免专业术语" />
+              </label>
+              <div className="create-preferences-foot">
+                <span>主体、领域和受众会从想法与账号记忆中推断。</span>
+                <button type="button" onClick={onClearDraft}>清空内容</button>
+              </div>
+            </section>
+          </div>
+        </div>
         {notice && <div className="product-alert alert-success" role="status"><span>✓</span><div><strong>{noticeTitle}</strong><p>{notice}</p></div></div>}
         {error && <div className="product-alert alert-warning create-project-error" role="alert"><span>!</span><div><strong>{errorTitle}</strong><p>{error}</p>{modelConfigurationRequired && <button className="secondary-button" type="button" onClick={onOpenModelConfig}>立即配置 API</button>}</div></div>}
       </form>

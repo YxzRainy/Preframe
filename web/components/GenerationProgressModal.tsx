@@ -31,7 +31,7 @@ export interface GenerationJobView {
   durationLabel?: string;
 }
 
-export type GenerationProgressStatus = "waiting" | "generating" | "validating" | "completed" | "repairing" | "failed";
+export type GenerationProgressStatus = "waiting" | "generating" | "validating" | "completed" | "repairing" | "failed" | "blocked";
 
 export interface GenerationProgressItem {
   id: string;
@@ -59,8 +59,9 @@ const STATUS_LABELS: Record<GenerationProgressStatus, string> = {
   generating: "生成中",
   validating: "校验中",
   completed: "已完成",
-  repairing: "修复中",
+  repairing: "自动纠错中",
   failed: "生成失败",
+  blocked: "未生成",
 };
 
 const WAITING_PROMPTS = [
@@ -102,6 +103,8 @@ function countCompleted(items: GenerationProgressItem[]): number {
 function activeItem(items: GenerationProgressItem[], job: GenerationJobView): GenerationProgressItem | undefined {
   return items.find((item) => item.status === "generating" || item.status === "validating" || item.status === "repairing")
     || items.find((item) => item.fileName === job.currentDocument)
+    || items.find((item) => item.status === "failed")
+    || items.find((item) => item.status === "blocked")
     || items.find((item) => item.status === "waiting")
     || items[items.length - 1];
 }
@@ -154,6 +157,16 @@ export function GenerationProgressModal({ open, job, progressItems, startedAt, e
   const current = activeItem(items, job);
   const elapsedLabel = useElapsedLabel(open, startedAt, endedAt);
   const hint = useRotatingPrompt(open, current?.fileName);
+  const diagnostic = current?.message && current.status !== "waiting" && current.status !== "completed" && current.status !== "validating"
+    ? current.message
+    : "";
+  const diagnosticTitle = current?.status === "repairing"
+    ? "首次生成未通过校验"
+    : current?.status === "generating"
+      ? "上一次模型调用失败"
+      : current?.status === "blocked"
+        ? "本次未生成原因"
+        : "生成失败原因";
   return (
     <Modal
       open={open}
@@ -184,7 +197,14 @@ export function GenerationProgressModal({ open, job, progressItems, startedAt, e
           <i style={{ width: `${progress}%` }} />
         </div>
         <p className="generation-current-doc">{job.status === "paused" ? "已暂停于：" : "正在生成："}<strong>{current?.fileName || "准备中"}</strong></p>
-        <p className="generation-waiting-tip">小提示：{hint}</p>
+        {diagnostic ? (
+          <div className={`generation-diagnostic status-${current?.status}`} role="status">
+            <strong>{diagnosticTitle}</strong>
+            <span>{diagnostic}</span>
+            {current?.status === "repairing" && <small>系统正在根据这条原因自动纠错，纠错完成后会重新校验。</small>}
+            {current?.status === "generating" && <small>系统正在自动重试模型调用。</small>}
+          </div>
+        ) : <p className="generation-waiting-tip">小提示：{hint}</p>}
         <ol className="generation-document-list">
           {items.map((item) => {
             const active = item.fileName === current?.fileName && (item.status === "generating" || item.status === "validating" || item.status === "repairing");

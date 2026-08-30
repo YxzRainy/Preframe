@@ -111,7 +111,7 @@ function updateJob(job: GenerationJobSnapshot, update: GenerationStatusUpdate): 
 
 function failActiveDocuments(job: GenerationJobSnapshot, message: string): void {
   job.generationProgress = job.generationProgress.map((document) => {
-    if (document.status === "generating" || document.status === "repairing") {
+    if (document.status === "generating" || document.status === "validating" || document.status === "repairing") {
       return { ...document, status: "failed", message };
     }
     return document;
@@ -310,15 +310,19 @@ export async function POST(request: Request) {
       }
     }
     finishJob(job);
+    const rootFailure = Object.values(result.documentsStatus).find((record) => record.documentStatus === "failed");
+    const blockedCount = Object.values(result.documentsStatus).filter((record) => record.documentStatus === "blocked").length;
     updateJob(job, {
       status: result.status === "complete" ? "completed" : result.status,
-      currentDocument: result.status === "complete" ? "3 份核心工作稿" : "生成已结束",
+      currentDocument: result.status === "complete" ? "3 份核心工作稿" : rootFailure?.fileName || "生成已结束",
       progress: Math.round((result.files.length / PROJECT_DOCUMENT_DEFINITIONS.length) * 100),
       message: result.status === "complete"
         ? ""
         : result.deadlineReached
           ? `任务达到 06:00 截止时间，已保存 ${result.files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份通过校验的核心工作稿。`
-          : `${result.files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份核心工作稿可用，可在项目中继续生成失败项。`,
+          : rootFailure
+            ? `${rootFailure.fileName} 生成失败：${rootFailure.validationErrors.join("；")}${blockedCount ? `；另有 ${blockedCount} 份下游文档因此未生成` : ""}`
+            : `${result.files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份核心工作稿可用。`,
     });
     return NextResponse.json({ ok: true, success: true, job: publicJob(job), ...result });
   } catch (error) {

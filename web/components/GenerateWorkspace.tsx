@@ -24,7 +24,7 @@ interface GenerateResponse {
   projectName?: string;
   files: ResultFile[];
   status?: "complete" | "partial" | "failed";
-  documentsStatus?: Record<string, { generated?: boolean; validationErrors?: string[] }>;
+  documentsStatus?: Record<string, { generated?: boolean; documentStatus?: string; validationErrors?: string[] }>;
   failedDocuments?: Array<{ id: string; fileName: string; validationErrors: string[] }>;
   failedStage?: string;
   error?: string;
@@ -363,11 +363,22 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
       setGenerationProgress(initialGenerationProgress().map((item) => {
         const documentStatus = data.documentsStatus?.[item.id];
         if (documentStatus?.generated || data.files.some((file) => file.name === item.fileName)) return { ...item, status: "completed" as const };
-        return { ...item, status: "failed" as const, message: documentStatus?.validationErrors?.join("；") };
+        return {
+          ...item,
+          status: documentStatus?.documentStatus === "blocked" ? "blocked" as const : "failed" as const,
+          message: documentStatus?.validationErrors?.join("；"),
+        };
       }));
+      const failedStatus = PROJECT_DOCUMENT_DEFINITIONS
+        .map((definition) => ({ definition, status: data.documentsStatus?.[definition.number] }))
+        .find((item) => item.status?.documentStatus === "failed");
+      const blockedCount = Object.values(data.documentsStatus || {}).filter((item) => item.documentStatus === "blocked").length;
+      const failureDetail = failedStatus
+        ? `${failedStatus.definition.filename}：${failedStatus.status?.validationErrors?.join("；") || "生成未通过校验"}`
+        : "生成未完成";
       setGenerationIssue(status === "complete"
         ? ""
-        : `本次运行已结束，用时 ${durationLabel}。${data.files.length}/${TOTAL_DOCUMENTS} 份文档可用；失败项已保留，可进入项目继续重试。`);
+        : `本次运行已结束，用时 ${durationLabel}。${failureDetail}${blockedCount ? `；另有 ${blockedCount} 份下游文档因此未生成` : ""}。`);
       setSuccessNotice(status === "complete");
       window.localStorage.removeItem(CREATE_PROJECT_DRAFT_KEY);
       setDraftSaved(false);

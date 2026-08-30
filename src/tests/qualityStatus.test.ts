@@ -225,6 +225,17 @@ test("修复成功的文档 documentStatus 为 repaired", () => {
   assert.equal(result.generated, true, "修复成功的文档 generated 应为 true（可用）");
 });
 
+test("因上游失败而未执行的文档标记为 blocked，不冒充生成失败", () => {
+  const result = statusRecord({
+    definition: PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === "03")!,
+    repaired: false,
+    validationErrors: ["因 02_拍摄执行稿.md 未通过校验，03_发布与复盘.md 本次未生成"],
+  });
+  assert.equal(result.documentStatus, "blocked");
+  assert.equal(result.status, "blocked");
+  assert.equal(result.generated, false);
+});
+
 // ─── 5. requiredSections 校验生效 ────────────────────────────────────────────
 test("缺少 requiredSections 的文档校验失败", () => {
   // def01 需要: 视频目标, 推荐方向, 视频结构, 执行优先级, 风险边界
@@ -324,6 +335,7 @@ function validOverviewContent(): string {
 
 test("当前文档质量失败后最多修复一次，并可在修复时恢复", async () => {
   let calls = 0;
+  const states: Array<{ state: string; errors: string[] }> = [];
   const result = await generateValidatedDocument({
     definition: def01,
     input,
@@ -338,9 +350,11 @@ test("当前文档质量失败后最多修复一次，并可在修复时恢复",
       calls += 1;
       return JSON.stringify({ content: calls <= DOCUMENT_RETRY_LIMIT ? "内容太短" : validOverviewContent() });
     },
+    onState: (state, errors = []) => states.push({ state, errors }),
   });
 
   assert.equal(calls, DOCUMENT_RETRY_LIMIT + 1, "应为首次生成加一次修复");
+  assert.ok(states.some((item) => item.state === "repairing" && item.errors.some((error) => error.includes("正文长度不足"))), "进入自动纠错前必须把首次失败原因发给界面");
   assert.ok(result.content, "修复成功后应返回当前文档");
   assert.equal(result.repaired, true, "重试成功的文档应标记为 repaired");
 });
@@ -551,6 +565,26 @@ test("拍摄执行稿必须是可直接拍的唯一真源", async () => {
   const brief = { ...input, extraRequirements: "无", coreViewpoint: "测试选题", contentStructure: "判断到步骤", targetDuration: "45-60秒", requiredElements: "核心判断", forbiddenExpressions: "绝对化表达", riskBoundaries: "不编造" };
   const errors = validateDocument(valid, definition, input, [], brief);
   assert.deepEqual(errors, []);
+
+  const qualifiedScript = valid
+    .replaceAll("答案不必完美，但必须真实。", "答案不一定完美，并非所有人都要照搬，结果也并非必然，但必须真实。");
+  const qualifiedBrief = {
+    ...brief,
+    forbiddenExpressions: "禁用“一定”“必然”“所有人都”；不用“首先其次最后”结构。",
+  };
+  assert.deepEqual(
+    validateDocument(qualifiedScript, definition, input, [], qualifiedBrief),
+    [],
+    "否定绝对化的风险限定不应被禁用词子串误伤",
+  );
+  const absoluteClaim = qualifiedScript.replaceAll("不一定完美", "一定完美");
+  assert.ok(validateDocument(absoluteClaim, definition, input, [], qualifiedBrief).some((error) => error.includes("禁用表达：一定")));
+  const enumeratedClaim = qualifiedScript.replaceAll(
+    "可以先约定一次具体讨论，把下一次见面、未来城市和各自能承担的行动写清楚。",
+    "首先约定具体讨论，其次写清未来城市，最后确认各自承担的行动。",
+  );
+  assert.ok(validateDocument(enumeratedClaim, definition, input, [], qualifiedBrief).some((error) => error.includes("禁用表达：首先其次最后")));
+
   const invalid = valid.replace("可直接拍", "后续再压缩").replaceAll("未拍", "已完成");
   const invalidErrors = validateDocument(invalid, definition, input, [], brief);
   assert.ok(invalidErrors.some((error) => error.includes("未拍")));
@@ -601,6 +635,31 @@ test("发布与复盘不得虚构评论和数据", () => {
     "只根据真实播放、停留、收藏和评论内容决定下一步。如果观众集中追问沟通方法，可延展成具体讨论模板；如果开头停留低，优先重剪前五秒；如果事实边界引发误解，先补充限定条件，不根据尚未出现的数据预判表现。",
   ].join("\n");
   assert.deepEqual(validateDocument(body, definition, input), []);
+  const columnOrientedReview = body.replace(
+    [
+      "| 回收节点 | 播放与停留 | 互动与评论 | 结论 |",
+      "| --- | --- | --- | --- |",
+      "| 24 小时 | 发布后填写 | 发布后填写 | 发布后填写 |",
+      "| 72 小时 | 发布后填写 | 发布后填写 | 发布后填写 |",
+      "| 7 天 | 发布后填写 | 发布后填写 | 发布后填写 |",
+    ].join("\n"),
+    [
+      "| 指标 | 24小时 | 72小时 | 7天 |",
+      "| --- | --- | --- | --- |",
+      "| 播放量 | 发布后填写 | 发布后填写 | 发布后填写 |",
+      "| 完播率 | 发布后填写 | 发布后填写 | 发布后填写 |",
+      "| 评论数 | 发布后填写 | 发布后填写 | 发布后填写 |",
+    ].join("\n"),
+  );
+  assert.deepEqual(validateDocument(columnOrientedReview, definition, input), [], "回收节点作为表头列时也应通过校验");
+  assert.equal(
+    normalizeAutomaticRepairCandidate(columnOrientedReview, "03_发布与复盘.md"),
+    columnOrientedReview,
+    "本地自动修复不应覆盖已经合格的列式复盘表",
+  );
+  const emptyColumnReview = columnOrientedReview.replaceAll("发布后填写", "");
+  assert.ok(validateDocument(emptyColumnReview, definition, input).some((error) => error.includes("24 小时")), "只有节点表头、没有待回填值时仍应失败");
+
   const recorded = body
     .replace("视频发布时间：发布后填写；视频链接：发布后填写；实际标题与封面版本：发布后填写。", "视频发布时间：2026-08-29 12:00；视频链接：https://example.com/video；发布状态：已发布。")
     .replace("| 24 小时 | 发布后填写 | 发布后填写 | 发布后填写 |", "| 24 小时 | 1200 次播放，平均停留 18 秒 | 36 收藏，12 评论 | 开头停留正常 |")

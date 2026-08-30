@@ -58,13 +58,11 @@ export function ProjectSidebar({
   const projectStatus = metadata.status === "complete" && completedCoreCount === totalCoreCount ? "complete" : completedCoreCount ? "partial" : "failed";
   const isLegacyWorkflow = !usesCurrentWorkflow;
 
-  function failureReason(docStatus: { validationErrors?: string[] } | undefined): string {
+  function failureReason(docStatus: { documentStatus?: string; validationErrors?: string[] } | undefined): string {
     const error = docStatus?.validationErrors?.[0] || "文档未生成";
-    if (/模型返回为空/u.test(error)) return "模型返回为空";
-    if (/格式异常|解析/u.test(error)) return "模型输出格式异常";
-    if (/依赖文档/u.test(error)) return "依赖文档生成失败";
-    if (/正文长度|缺少二级标题|缺少一级标题|校验/u.test(error)) return "内容校验未通过";
-    return error.length > 18 ? `${error.slice(0, 18)}…` : error;
+    if (docStatus?.documentStatus === "blocked") return error.replace(/^因\s*/u, "因 ");
+    if (/最终交付仍包含禁用表达/u.test(error)) return error.replace("最终交付仍包含", "");
+    return error.length > 24 ? `${error.slice(0, 24)}…` : error;
   }
 
   const renderFile = (file: ResultFile) => {
@@ -96,6 +94,7 @@ export function ProjectSidebar({
   const renderMissingFile = (definition: (typeof PROJECT_DOCUMENT_DEFINITIONS)[number]) => {
     const docStatus = documentsStatus[definition.number];
     const error = docStatus?.validationErrors?.[0];
+    const blocked = docStatus?.documentStatus === "blocked";
     const active = viewMode === "documents" && definition.filename === activeName;
     return (
       <button
@@ -117,7 +116,7 @@ export function ProjectSidebar({
           <strong>{definition.title}</strong>
           <small>{failureReason(docStatus)}</small>
         </span>
-        <span className="step-type failed">生成失败</span>
+        <span className={`step-type ${blocked ? "blocked" : "failed"}`}>{blocked ? "未生成" : "生成失败"}</span>
       </button>
     );
   };

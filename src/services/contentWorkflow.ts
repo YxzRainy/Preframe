@@ -3,7 +3,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 import type { GenerateInput } from "../prompts/generatePrompt.js";
 import { documentContext } from "../prompts/enhancePrompt.js";
-import { CORE_PROJECT_DOCUMENT_DEFINITIONS, PROJECT_DOCUMENT_DEFINITIONS } from "../utils/documentDefinitions.js";
+import { CORE_PROJECT_DOCUMENT_DEFINITIONS, PROJECT_DOCUMENT_DEFINITIONS, type ProjectDocumentDefinition } from "../utils/documentDefinitions.js";
 import {
   buildRefinePrompt,
   buildRefineRepairPrompt,
@@ -35,6 +35,7 @@ import {
   generateValidatedDocument,
   PLACEHOLDER_PHRASES,
   statusRecord,
+  reviewCheckpointHasUsableData,
   validateDocument,
   type DocumentQualityStatus,
   type DocumentState,
@@ -86,7 +87,7 @@ export interface GenerationStatusUpdate {
 }
 
 export type GenerationFailureStage = "generate" | "model" | "parse" | "write";
-export type GenerationDocumentProgressStatus = "waiting" | "generating" | "validating" | "completed" | "repairing" | "failed";
+export type GenerationDocumentProgressStatus = "waiting" | "generating" | "validating" | "completed" | "repairing" | "failed" | "blocked";
 
 export interface GenerationDocumentProgress {
   id: string;
@@ -186,6 +187,14 @@ function projectMetadata(
   };
 }
 
+function blockedDocumentResult(definition: ProjectDocumentDefinition, blocker: ProjectDocumentDefinition): GeneratedDocumentResult {
+  return {
+    definition,
+    repaired: false,
+    validationErrors: [`因 ${blocker.filename} 未通过校验，${definition.filename} 本次未生成`],
+  };
+}
+
 function documentProgress(overrides: Partial<Record<string, { status: GenerationDocumentProgressStatus; message?: string }>> = {}): GenerationDocumentProgress[] {
   return PROJECT_DOCUMENT_DEFINITIONS.map((definition) => {
     const override = overrides[definition.filename];
@@ -280,7 +289,14 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
       accepted.push({ name: definition.filename, content: result.content });
     }
 
-    const orderedResults = PROJECT_DOCUMENT_DEFINITIONS.map((definition) => results.get(definition.number) || ({ definition, repaired: false, validationErrors: ["上游文档未通过校验"] }));
+    const blocker = [...results.values()].find((result) => !result.content)?.definition;
+    if (blocker) {
+      for (const definition of PROJECT_DOCUMENT_DEFINITIONS.filter((item) => Number(item.number) > Number(blocker.number))) {
+        progressState[definition.filename] = { status: "blocked", message: blockedDocumentResult(definition, blocker).validationErrors[0] };
+      }
+    }
+    const orderedResults = PROJECT_DOCUMENT_DEFINITIONS.map((definition) => results.get(definition.number)
+      || (blocker ? blockedDocumentResult(definition, blocker) : { definition, repaired: false, validationErrors: ["文档未生成"] }));
     const statusRecords = orderedResults.map(statusRecord);
     const files: ContentFile[] = [];
     await withStage("write", async () => {
@@ -325,11 +341,16 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
     const failedDocuments = statusRecords.filter((record) => record.failed).map((record) => ({ id: record.id, fileName: record.fileName, validationErrors: record.validationErrors }));
     const status = files.length === PROJECT_DOCUMENT_DEFINITIONS.length ? "complete" : files.length ? "partial" : "failed";
     const deadlineReached = taskSignal.aborted && taskSignal.reason instanceof DOMException && taskSignal.reason.name === "TimeoutError";
+    const rootFailure = statusRecords.find((record) => record.documentStatus === "failed");
+    const blockedCount = statusRecords.filter((record) => record.documentStatus === "blocked").length;
+    const failureMessage = rootFailure
+      ? `${rootFailure.fileName} 生成失败：${rootFailure.validationErrors.join("；")}${blockedCount ? `；另有 ${blockedCount} 份下游文档因此未生成` : ""}`
+      : `${files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份核心文档可用。`;
     options.onStatus?.({
       status: status === "complete" ? "completed" : status,
-      currentDocument: status === "complete" ? "03_发布与复盘.md" : "生成已结束",
+      currentDocument: status === "complete" ? "03_发布与复盘.md" : rootFailure?.fileName || "生成已结束",
       progress: Math.round((files.length / PROJECT_DOCUMENT_DEFINITIONS.length) * 100),
-      message: status === "complete" ? "三份核心文档已生成，并通过自动质量门。" : `${files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份核心文档可用。`,
+      message: status === "complete" ? "三份核心文档已生成，并通过自动质量门。" : failureMessage,
       generationProgress: documentProgress(progressState),
     });
     return { projectSlug, projectName, files, status, documentsStatus, failedDocuments, modelCalls, deadlineReached };
@@ -409,6 +430,7 @@ export async function regenerateProjectDocuments(
   const targets = new Set(PROJECT_DOCUMENT_DEFINITIONS.filter((definition) => Number(definition.number) >= firstTarget).map((definition) => definition.number));
   const regenerated = new Map<string, GeneratedDocumentResult>();
   const accepted: Array<{ name: string; content: string }> = [];
+  let blocker: ProjectDocumentDefinition | undefined;
 
   for (const definition of PROJECT_DOCUMENT_DEFINITIONS) {
     const current = existing.get(definition.filename);
@@ -427,7 +449,10 @@ export async function regenerateProjectDocuments(
       onModelCall: recordModelCall,
     });
     regenerated.set(definition.number, result);
-    if (!result.content) break;
+    if (!result.content) {
+      blocker = definition;
+      break;
+    }
     if (current) await archiveDocumentVersion(projectSlug, definition.filename, current, "regenerate");
     await writeMarkdown(path.join(projectDir, definition.filename), result.content);
     existing.set(definition.filename, result.content);
@@ -438,7 +463,10 @@ export async function regenerateProjectDocuments(
     const result = regenerated.get(definition.number);
     if (result) return statusRecord(result);
     const content = existing.get(definition.filename);
-    return content ? statusRecord({ definition, content, repaired: false, validationErrors: [] }) : statusRecord({ definition, repaired: false, validationErrors: ["文档缺失"] });
+    if (content) return statusRecord({ definition, content, repaired: false, validationErrors: [] });
+    return statusRecord(blocker && Number(definition.number) > Number(blocker.number)
+      ? blockedDocumentResult(definition, blocker)
+      : { definition, repaired: false, validationErrors: ["文档缺失"] });
   });
   const completedCount = records.filter((record) => record.generated).length;
   const status = completedCount === PROJECT_DOCUMENT_DEFINITIONS.length ? "complete" : completedCount ? "partial" : "failed";
@@ -576,17 +604,9 @@ function replaceMarkdownSectionBody(content: string, heading: string, transform:
 
 const REVIEW_CHECKPOINTS = ["24 小时", "72 小时", "7 天"] as const;
 
-function hasUsableReviewRow(body: string, checkpoint: string): boolean {
-  const compact = checkpoint.replace(/\s+/g, "");
-  return body.split("\n").some((line) => {
-    if (!line.trim().startsWith("|") || !line.replace(/\s+/g, "").includes(compact)) return false;
-    return /发布后填写|(?:\d|已完成|已记录|不适用)/u.test(line.replace(checkpoint, ""));
-  });
-}
-
 function normalizePublishReviewTable(content: string): string {
   return replaceMarkdownSectionBody(content, "数据复盘", (body) => {
-    if (REVIEW_CHECKPOINTS.every((checkpoint) => hasUsableReviewRow(body, checkpoint))) return body;
+    if (REVIEW_CHECKPOINTS.every((checkpoint) => reviewCheckpointHasUsableData(body, checkpoint, true))) return body;
     return [
       "| 回收节点 | 播放与停留 | 互动与评论 | 结论 |",
       "| --- | --- | --- | --- |",

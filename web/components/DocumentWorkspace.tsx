@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   ArrowClockwise,
+  Check,
   CheckCircle,
   Copy,
   DownloadSimple,
@@ -45,6 +46,7 @@ interface DocumentWorkspaceProps {
   onRefine?: (event: FormEvent<HTMLFormElement>) => void;
   onSave?: (content: string) => Promise<string | void>;
   onDocumentSaved?: () => void;
+  onNoticeConfirm?: () => void;
 }
 
 export function DocumentWorkspace({
@@ -70,9 +72,11 @@ export function DocumentWorkspace({
   onRefine,
   onSave,
   onDocumentSaved,
+  onNoticeConfirm,
 }: DocumentWorkspaceProps) {
   const failedSelection = !file && Boolean(selectedFileName && failureReasons.length);
-  const dependencyFailure = failureReasons.some((reason) => reason.includes("依赖文档"));
+  const blockedSelection = failedSelection && failureReasons.some((reason) => /本次未生成/u.test(reason));
+  const dependencyFailure = failureReasons.some((reason) => /依赖文档|本次未生成/u.test(reason));
   const [refineOpen, setRefineOpen] = useState(false);
   const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [draft, setDraft] = useState("");
@@ -132,7 +136,7 @@ export function DocumentWorkspace({
   return (
     <section className="document-workspace project-surface-enter" key={transitionKey}>
       <header className="document-commandbar">
-        {failedSelection && <span className="document-failure-status"><WarningCircle size={14} weight="fill" />生成失败</span>}
+        {failedSelection && <span className="document-failure-status"><WarningCircle size={14} weight="fill" />{blockedSelection ? "本次未生成" : "生成失败"}</span>}
         <div className="document-actions">
           {file && onSave && (
             <div className="document-view-switcher" role="group" aria-label="文档视图">
@@ -202,6 +206,11 @@ export function DocumentWorkspace({
             <strong>{noticeDetails.length ? "修复完成" : "操作已完成"}</strong>
             <span>{noticeDetails.length ? `已修复 ${noticeDetails.length} 项，已通过复检` : notice}</span>
           </div>
+          {onNoticeConfirm && (
+            <button className="document-success-confirm" type="button" onClick={onNoticeConfirm}>
+              <Check size={14} weight="bold" />确认
+            </button>
+          )}
         </div>
       )}
       {saveError && <div className="product-alert alert-warning" role="alert"><span>!</span><div><strong>未能保存修改</strong><p>{saveError}</p></div></div>}
@@ -241,15 +250,15 @@ export function DocumentWorkspace({
         ) : failedSelection ? (
           <section className="document-failure-view" aria-labelledby="document-failure-title">
             <span className="document-failure-icon"><WarningCircle size={24} weight="fill" /></span>
-            <p className="document-failure-kicker">该文档尚未生成</p>
+            <p className="document-failure-kicker">{blockedSelection ? "该文档未进入生成" : "该文档生成后未通过校验"}</p>
             <h3 id="document-failure-title">{selectedFileName}</h3>
             <div className="document-failure-reason">
-              <strong>失败原因</strong>
+              <strong>{blockedSelection ? "未生成原因" : "生成失败原因"}</strong>
               {failureReasons.map((reason) => <p key={reason}>{reason}</p>)}
             </div>
-            <p className="document-failure-guidance">{dependencyFailure ? "重试时会先修复缺失的依赖文档，再继续生成当前文档。" : "重试只处理当前失败项，已生成的文档不会被覆盖。"}</p>
+            <p className="document-failure-guidance">{dependencyFailure ? "需要先让上游文档通过校验，系统才会继续生成当前文档。" : "原因已记录；重新生成只处理当前失败项，不覆盖其他已完成文档。"}</p>
             <button className="primary-button document-retry-button" type="button" disabled={regenerating} onClick={onRetrySelected}>
-              <ArrowClockwise size={17} weight="bold" />{regenerating ? "正在重新生成" : dependencyFailure ? "修复依赖并重新生成" : "重新生成当前文档"}
+              <ArrowClockwise size={17} weight="bold" />{regenerating ? "正在重新生成" : dependencyFailure ? "从失败文档继续生成" : "重新生成当前文档"}
             </button>
           </section>
         ) : (

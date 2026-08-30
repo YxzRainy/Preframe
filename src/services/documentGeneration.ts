@@ -17,13 +17,13 @@ export { PLACEHOLDER_PHRASES };
 export type DocumentState = "waiting" | "generating" | "validating" | "repairing" | "completed" | "failed";
 
 /** 每份文档的精确状态：写入 project.json 和 UI 展示。 */
-export type DocumentQualityStatus = "generated" | "repaired" | "fallback" | "failed";
+export type DocumentQualityStatus = "generated" | "repaired" | "fallback" | "failed" | "blocked";
 
 export interface DocumentStatusRecord {
   id: string;
   fileName: string;
-  status: "completed" | "failed";
-  /** 精确状态：generated/repaired/fallback/failed */
+  status: "completed" | "failed" | "blocked";
+  /** 精确状态：generated/repaired/fallback/failed/blocked */
   documentStatus: DocumentQualityStatus;
   generated: boolean;
   repaired: boolean;
@@ -128,13 +128,35 @@ function forbiddenPhrases(value: string | undefined): string[] {
     .filter((item) => item.length >= 2 && item.length <= 30 && !/^(?:无|没有)$/u.test(item)))];
 }
 
+const NEGATABLE_ABSOLUTE_EXPRESSIONS = new Set(["一定", "必然", "所有人都", "每个人都", "任何人都"]);
+
+function isNegatedOccurrence(target: string, index: number): boolean {
+  const prefix = target.slice(Math.max(0, index - 6), index).replace(/\s+$/u, "");
+  return /(?:不|未|非|并非|并不|不是)$/u.test(prefix);
+}
+
+function containsForbiddenExpression(target: string, phrase: string): boolean {
+  // “首先其次最后”描述的是结构，不要求三个词在正文里紧挨着。
+  if (phrase === "首先其次最后") return /首先[\s\S]*其次[\s\S]*最后/u.test(target);
+
+  let offset = 0;
+  while (offset < target.length) {
+    const index = target.indexOf(phrase, offset);
+    if (index < 0) return false;
+    const qualifiedAbsolute = NEGATABLE_ABSOLUTE_EXPRESSIONS.has(phrase) && isNegatedOccurrence(target, index);
+    if (!qualifiedAbsolute) return true;
+    offset = index + phrase.length;
+  }
+  return false;
+}
+
 function validateForbiddenExpressions(content: string, definition: ProjectDocumentDefinition, brief?: ProjectBrief): string[] {
   const phrases = forbiddenPhrases(brief?.forbiddenExpressions);
   if (!phrases.length || definition.number === "01") return [];
   const target = definition.number === "02"
     ? sectionBody(content, "最终逐字口播稿")
     : [sectionBody(content, "最终发布卡"), sectionBody(content, "平台发布文案")].join("\n");
-  return phrases.filter((phrase) => target.includes(phrase)).map((phrase) => `最终交付仍包含禁用表达：${phrase}`);
+  return phrases.filter((phrase) => containsForbiddenExpression(target, phrase)).map((phrase) => `最终交付仍包含禁用表达：${phrase}`);
 }
 
 function validateCreativeBrief(content: string): string[] {
@@ -256,6 +278,43 @@ function supersededPhrases(otherDocuments: Array<{ name: string; content: string
   return otherDocuments.flatMap((document) => [...document.content.matchAll(/[“"']([^“”"']{2,30})[”"'].{0,10}必须改成/gu)].map((match) => match[1]));
 }
 
+function markdownTableCells(line: string): string[] | null {
+  const trimmed = line.trim();
+  if (!/^\|.*\|$/u.test(trimmed)) return null;
+  return trimmed.slice(1, -1).split("|").map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparator(cells: string[] | null): boolean {
+  return Boolean(cells?.length && cells.every((cell) => /^:?-{3,}:?$/u.test(cell)));
+}
+
+/** 同时识别“节点在行”与“节点在列”的 Markdown 复盘表。 */
+export function reviewCheckpointHasUsableData(review: string, checkpoint: string, allowRecordedResults = false): boolean {
+  const lines = review.split("\n");
+  const compact = checkpoint.replace(/\s+/gu, "");
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const cells = markdownTableCells(lines[lineIndex] || "");
+    if (!cells) continue;
+    const checkpointIndex = cells.findIndex((cell) => cell.replace(/\s+/gu, "").includes(compact));
+    if (checkpointIndex < 0) continue;
+
+    const nextCells = markdownTableCells(lines[lineIndex + 1] || "");
+    const values = cells.filter((_cell, index) => index !== checkpointIndex);
+    if (isMarkdownTableSeparator(nextCells)) {
+      values.length = 0;
+      for (let rowIndex = lineIndex + 2; rowIndex < lines.length; rowIndex += 1) {
+        const row = markdownTableCells(lines[rowIndex] || "");
+        if (!row) break;
+        if (!isMarkdownTableSeparator(row)) values.push(row[checkpointIndex] || "");
+      }
+    }
+    const usableValues = values.filter(Boolean);
+    if (usableValues.some((value) => /发布后填写/u.test(value))) return true;
+    if (allowRecordedResults && usableValues.some((value) => /(?:\d|已完成|已记录|不适用)/u.test(value))) return true;
+  }
+  return false;
+}
+
 function validatePublishAndReview(content: string, input: GenerateInput, otherDocuments: Array<{ name: string; content: string }>, allowRecordedResults = false): string[] {
   const errors: string[] = [];
   const publishCard = sectionBody(content, "最终发布卡");
@@ -270,9 +329,7 @@ function validatePublishAndReview(content: string, input: GenerateInput, otherDo
   for (const checkpoint of ["24 小时", "72 小时", "7 天"]) {
     const compact = checkpoint.replace(/\s+/g, "");
     if (!review.replace(/\s+/g, "").includes(compact)) errors.push(`数据复盘缺少 ${checkpoint} 回收节点`);
-    const row = review.split("\n").find((line) => line.trim().startsWith("|") && line.replace(/\s+/g, "").includes(compact));
-    const hasRecordedValue = Boolean(row && allowRecordedResults && /(?:\d|已完成|已记录|不适用)/u.test(row.replace(checkpoint, "")));
-    if (!row || (!/发布后填写/u.test(row) && !hasRecordedValue)) errors.push(`数据复盘应使用表格，并将 ${checkpoint} 未知数据标记为“发布后填写”，或填写真实结果`);
+    if (!reviewCheckpointHasUsableData(review, checkpoint, allowRecordedResults)) errors.push(`数据复盘应使用表格，并将 ${checkpoint} 未知数据标记为“发布后填写”，或填写真实结果`);
   }
   if (/评论区高频回复|合作私信|杠精私信|粉丝群公告/u.test(content)) errors.push("发布卡混入账号级通用话术或虚构高频评论");
   if (!allowRecordedResults && /(?:发布时段|发布时间|调整至|建议在)[^。\n]{0,30}\d{1,2}:\d{2}/u.test(content)) {
@@ -508,8 +565,11 @@ export function statusRecord(result: GeneratedDocumentResult): DocumentStatusRec
   const completed = Boolean(result.content);
   // 检测 fallback：无内容但 validationErrors 含占位相关错误，或内容本身含占位语
   const hasFallbackContent = completed && PLACEHOLDER_PHRASES.some((phrase) => result.content!.includes(phrase));
+  const blocked = !completed && result.validationErrors.some((error) => /本次未生成/u.test(error));
   let documentStatus: DocumentQualityStatus;
-  if (!completed) {
+  if (blocked) {
+    documentStatus = "blocked";
+  } else if (!completed) {
     documentStatus = "failed";
   } else if (hasFallbackContent) {
     documentStatus = "fallback";
@@ -521,7 +581,7 @@ export function statusRecord(result: GeneratedDocumentResult): DocumentStatusRec
   return {
     id: result.definition.number,
     fileName: result.definition.filename,
-    status: completed && !hasFallbackContent ? "completed" : "failed",
+    status: completed && !hasFallbackContent ? "completed" : blocked ? "blocked" : "failed",
     documentStatus,
     generated: completed && !hasFallbackContent,
     repaired: completed && !hasFallbackContent && result.repaired,

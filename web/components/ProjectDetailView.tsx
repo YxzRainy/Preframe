@@ -107,26 +107,27 @@ function FailedDocumentTools({
   retrying: boolean;
   onRetry: () => void;
 }) {
-  const dependencyFailure = reasons.some((reason) => reason.includes("依赖文档"));
+  const blocked = reasons.some((reason) => /本次未生成/u.test(reason));
+  const dependencyFailure = reasons.some((reason) => /依赖文档|本次未生成/u.test(reason));
   return (
     <aside className="agent-panel document-recovery-panel">
       <header className="agent-panel-header">
-        <div><span className="section-index">恢复</span><h2>文档恢复</h2><p>查看原因并重新生成失败项</p></div>
-        <StatusBadge tone="warning">待处理</StatusBadge>
+        <div><span className="section-index">诊断</span><h2>生成诊断</h2><p>先查看原因，再决定是否重新生成</p></div>
+        <StatusBadge tone="warning">{blocked ? "未生成" : "生成失败"}</StatusBadge>
       </header>
       <div className="document-recovery-body">
         <span className="document-recovery-icon"><WarningCircle size={22} weight="fill" /></span>
-        <p className="document-recovery-label">当前失败文档</p>
+        <p className="document-recovery-label">{blocked ? "当前未生成文档" : "当前失败文档"}</p>
         <strong>{fileName}</strong>
         <div className="document-recovery-copy">
           {reasons.map((reason) => <p key={reason}>{reason}</p>)}
         </div>
         <button className="agent-action primary" type="button" disabled={retrying} onClick={onRetry}>
-          <ArrowClockwise size={16} weight="bold" />{retrying ? "正在重新生成" : dependencyFailure ? "修复依赖并重新生成" : "重新生成当前文档"}
+          <ArrowClockwise size={16} weight="bold" />{retrying ? "正在重新生成" : dependencyFailure ? "从失败文档继续生成" : "重新生成当前文档"}
         </button>
-        <small>{dependencyFailure ? "系统会先生成缺失的上游文档，再继续当前文档。" : "不会覆盖其他已完成文档。"}</small>
+        <small>{dependencyFailure ? "系统会先重新生成未通过校验的上游文档，通过后才继续当前文档。" : "原因已保留，不会覆盖其他已完成文档。"}</small>
       </div>
-      <footer className="agent-panel-footer"><span>本地工作区</span><span>失败项可单独恢复</span></footer>
+      <footer className="agent-panel-footer"><span>本地工作区</span><span>失败原因已记录</span></footer>
     </aside>
   );
 }
@@ -473,6 +474,7 @@ export function ProjectDetailView({ slug }: { slug: string }) {
             onRefine={refine}
             onSave={activeFile ? saveDocument : undefined}
             onDocumentSaved={() => setDocumentRefreshKey((value) => value + 1)}
+            onNoticeConfirm={() => { setNotice(""); setNoticeDetails([]); }}
           />
           {showCoverTools ? <AgentToolsPanel
             slug={slug}

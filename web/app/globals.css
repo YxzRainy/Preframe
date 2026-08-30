@@ -4132,6 +4132,25 @@ body {
   line-height: 1.5;
 }
 
+.generation-diagnostic {
+  display: grid;
+  gap: 4px;
+  margin: -6px 0 0;
+  padding: 11px 12px;
+  border: 1px solid rgba(216,168,91,.28);
+  border-radius: 10px;
+  background: rgba(216,168,91,.09);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.generation-diagnostic strong { color: var(--text-primary); font-size: 13px; }
+.generation-diagnostic span { overflow-wrap: anywhere; }
+.generation-diagnostic small { color: var(--text-secondary); }
+.generation-diagnostic.status-failed { border-color: rgba(233,120,120,.28); background: rgba(233,120,120,.08); }
+.generation-diagnostic.status-blocked { border-color: rgba(var(--fg-rgb),.12); background: rgba(var(--fg-rgb),.04); }
+
 .generation-document-list {
   display:grid;
   gap: 8px;
@@ -4274,6 +4293,18 @@ body {
   color:var(--text-primary);
   border-color:rgba(233,120,120,.28);
   background:rgba(233,120,120,.14);
+}
+
+.generation-document-item.status-blocked {
+  border-color: rgba(var(--fg-rgb),.09);
+  background: rgba(var(--fg-rgb),.02);
+}
+
+.generation-document-item.status-blocked i,
+.generation-document-item.status-blocked em {
+  color: var(--text-secondary);
+  border-color: rgba(var(--fg-rgb),.1);
+  background: rgba(var(--fg-rgb),.05);
 }
 
 @media (max-width: 720px) {
@@ -9913,6 +9944,7 @@ body {
 .project-console .flow-step.missing.active .step-node { color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, transparent); }
 .project-console .flow-step.missing.active .step-copy strong { color: var(--project-text); }
 .project-console .step-type.failed { color: var(--warning); }
+.project-console .step-type.blocked { color: var(--project-label); }
 .project-console .flow-step.active { border: 0; background: var(--project-blue-soft); }
 .project-console .step-node { width: 28px; height: 28px; border: 0; border-radius: 8px; color: var(--project-label); background: var(--project-fill); }
 .project-console .flow-step.active .step-node { color: #fff; background: var(--project-blue); }
@@ -13213,13 +13245,14 @@ body:has(.dashboard-shell) .dashboard-queue-progress i {
 
 /* Auto-repair result: a quiet confirmation; the document remains the visual focus. */
 .document-success-alert {
-  display: inline-flex;
-  align-self: flex-start;
+  display: flex;
+  align-self: stretch;
   align-items: center;
-  gap: 8px;
-  max-width: 100%;
-  margin: 0 0 18px;
-  padding: 7px 11px 7px 8px;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 20px;
+  padding: 9px 12px 9px 10px;
   border: 1px solid color-mix(in srgb, var(--success) 34%, var(--border-subtle));
   border-radius: 12px;
   color: var(--text-primary);
@@ -13227,13 +13260,43 @@ body:has(.dashboard-shell) .dashboard-queue-progress i {
   box-shadow: 0 1px 2px rgba(0, 0, 0, .08);
 }
 .document-success-alert > svg { flex: 0 0 auto; color: var(--success); }
-.document-success-copy { display: flex; min-width: 0; align-items: baseline; gap: 6px; }
+.document-success-copy { display: flex; flex: 1 1 auto; min-width: 0; align-items: baseline; gap: 6px; }
 .document-success-copy strong { font-size: 11px; font-weight: 650; letter-spacing: -.01em; white-space: nowrap; }
 .document-success-copy span { overflow: hidden; color: var(--text-secondary); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.document-success-confirm {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  margin-left: auto;
+  padding: 0 11px;
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 34%, var(--border-subtle));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--success) 10%, var(--bg-elevated));
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .16s ease, border-color .16s ease, color .16s ease;
+}
+.document-success-confirm:hover {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--success) 52%, var(--border-subtle));
+  background: color-mix(in srgb, var(--success) 16%, var(--bg-elevated));
+}
+.document-success-confirm:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--success) 45%, transparent);
+  outline-offset: 2px;
+}
 @media (max-width: 520px) {
   .document-success-alert { align-items: flex-start; border-radius: 10px; }
   .document-success-copy { align-items: flex-start; flex-direction: column; gap: 1px; }
   .document-success-copy span { white-space: normal; }
+  .document-success-confirm { margin-left: auto; }
 }
 
 /* Cover prompt actions are intentionally compact: the visual direction remains the primary control. */
@@ -14464,7 +14527,7 @@ body:has(.create-project-sheet) .modal-overlay {
 .create-project-sheet .modal-header p { max-width: 560px; font-size: 13px !important; }
 .create-project-sheet .modal-body { padding: 14px 32px 26px !important; }
 .create-project-sheet .new-task-form { gap: 16px; }
-.create-project-sheet:has(.create-preferences) .create-prompt-composer textarea {
+.create-project-sheet:has(.create-preferences-reveal.is-open) .create-prompt-composer textarea {
   height: 112px;
   min-height: 112px !important;
 }
@@ -14696,4 +14759,58 @@ body:has(.create-project-sheet) .modal-overlay {
   background: transparent;
   appearance: none;
   text-align: left;
+}
+
+/* Let the optional preferences change the sheet's intrinsic height instead of
+   mounting at full size in a single frame. */
+.create-preferences-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  margin-top: -16px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    grid-template-rows 360ms cubic-bezier(.22, 1, .36, 1),
+    margin-top 360ms cubic-bezier(.22, 1, .36, 1),
+    opacity 180ms ease,
+    visibility 0s linear 360ms;
+}
+.create-preferences-reveal.is-open {
+  grid-template-rows: 1fr;
+  margin-top: 0;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    grid-template-rows 360ms cubic-bezier(.22, 1, .36, 1),
+    margin-top 360ms cubic-bezier(.22, 1, .36, 1),
+    opacity 240ms ease,
+    visibility 0s;
+}
+.create-preferences-reveal-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+.create-preferences-reveal .create-preferences {
+  transform: translateY(-8px);
+  animation: none;
+  transition: transform 360ms cubic-bezier(.22, 1, .36, 1);
+}
+.create-preferences-reveal.is-open .create-preferences { transform: translateY(0); }
+.create-prompt-composer textarea {
+  height: 144px;
+  transition: height 360ms cubic-bezier(.22, 1, .36, 1);
+}
+@media (max-width: 640px) {
+  .create-prompt-composer textarea { height: 132px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .create-preferences-reveal,
+  .create-preferences-reveal.is-open,
+  .create-preferences-reveal .create-preferences,
+  .create-prompt-composer textarea {
+    transition: none;
+  }
 }
