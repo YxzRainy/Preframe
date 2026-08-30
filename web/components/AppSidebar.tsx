@@ -6,7 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { CaretRight, CheckCircle, CloudArrowDown, FolderOpen, GearSix, HardDrives, House, Lightbulb, Plus, WarningCircle, X } from "@phosphor-icons/react";
 import { readJsonResponse } from "../lib/readJsonResponse";
-import { readLocalModelConfig } from "../lib/localModelConfig";
+import { clearLegacyBrowserApiKey } from "../lib/modelConfigClient";
 
 export interface WorkspaceState {
   outputDir: string;
@@ -90,16 +90,15 @@ export function AppSidebar({ initialWorkspace }: AppSidebarProps) {
 
   useEffect(() => { setMobileOpen(false); }, [pathname]);
 
+  useEffect(() => { clearLegacyBrowserApiKey(); }, []);
+
   const loadSystemStatus = useCallback(async () => {
     try {
-      const [response, localConfig] = await Promise.all([
-        fetch("/api/model-config", { cache: "no-store" }),
-        Promise.resolve(readLocalModelConfig()),
-      ]);
+      const response = await fetch("/api/model-config", { cache: "no-store" });
       const data = await readJsonResponse<{ config?: PublicModelConfig }>(response);
-      setModelStatus(localConfig?.apiKey || (response.ok && Boolean(data.config?.configured)) ? "ready" : "attention");
+      setModelStatus(response.ok && Boolean(data.config?.configured) ? "ready" : "attention");
     } catch {
-      setModelStatus(readLocalModelConfig()?.apiKey ? "ready" : "attention");
+      setModelStatus("attention");
     }
   }, []);
 

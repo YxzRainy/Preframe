@@ -112,7 +112,8 @@ Web 关键组件：
 
 ## 七、数据与安全
 
-- API Key 不写入 Markdown、`project.json` 或日志；
+- DeepSeek API Key 只保存在项目根目录 `.env`，不写入浏览器存储、Markdown、`project.json`、日志或配置备份；
+- Web 默认只监听 `127.0.0.1`，并拒绝非 loopback Host 与跨来源请求；
 - `.env`、`.piance/`、`output/` 和备份目录不得暴露；
 - 模型调用统一通过 `src/services/modelClient.ts`；
 - 项目文档修改先归档旧版本，不静默覆盖；

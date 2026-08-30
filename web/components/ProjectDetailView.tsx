@@ -15,7 +15,7 @@ import { initialMigrationProgress, MigrationProgressModal, type MigrationProgres
 import type { ResultFile } from "./ResultTabs";
 import { isPrimaryProjectDocument, isVisualPromptDocument, PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinitions";
 import { readJsonResponse } from "../lib/readJsonResponse";
-import { promptForModelConfig, withLocalModelConfig } from "../lib/localModelConfig";
+import { promptForModelConfig } from "../lib/modelConfigClient";
 
 interface ProjectDetail {
   slug: string;
@@ -221,7 +221,7 @@ export function ProjectDetailView({ slug }: { slug: string }) {
     if (!activeFile) return;
     setRefining(true); setError(""); setNotice(""); setNoticeDetails([]);
     try {
-      const response = await fetch("/api/refine", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(withLocalModelConfig({ projectSlug: slug, fileName: activeFile.name, feedback })) });
+      const response = await fetch("/api/refine", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectSlug: slug, fileName: activeFile.name, feedback }) });
       const data = await readJsonResponse<{ file: ResultFile; error?: string; errorCode?: string }>(response);
       if (!response.ok) {
         promptForModelConfig(data.errorCode);
@@ -243,7 +243,7 @@ export function ProjectDetailView({ slug }: { slug: string }) {
       const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/document/repair`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(withLocalModelConfig({ fileName })),
+        body: JSON.stringify({ fileName }),
       });
       const data = await readJsonResponse<{ file?: ResultFile & { repaired?: boolean; previousValidationErrors?: string[] }; error?: string; errorCode?: string }>(response);
       if (!response.ok) {
@@ -275,7 +275,7 @@ export function ProjectDetailView({ slug }: { slug: string }) {
       const response = await fetch("/api/cover/prompt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(withLocalModelConfig({ content: activeFile.content, ratio: coverRatio })),
+        body: JSON.stringify({ content: activeFile.content, ratio: coverRatio }),
       });
       const data = await readJsonResponse<{ prompt?: string; error?: string; errorCode?: string }>(response);
       if (!response.ok) {
@@ -322,7 +322,7 @@ export function ProjectDetailView({ slug }: { slug: string }) {
       const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/migrate`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-        body: JSON.stringify(withLocalModelConfig({})),
+        body: JSON.stringify({}),
       });
       const data = response.headers.get("content-type")?.includes("text/event-stream")
         ? await readMigrationProgress(response, setMigrationProgress)
@@ -343,7 +343,7 @@ export function ProjectDetailView({ slug }: { slug: string }) {
   async function regenerateInvalidDocuments() {
     setRegenerating(true); setError(""); setNotice(""); setNoticeDetails([]);
     try {
-      const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/regenerate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(withLocalModelConfig({ documents: [] })) });
+      const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/regenerate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ documents: [] }) });
       const data = await readJsonResponse<{ status?: string; error?: string; errorCode?: string }>(response);
       if (!response.ok) {
         promptForModelConfig(data.errorCode);
@@ -363,7 +363,7 @@ export function ProjectDetailView({ slug }: { slug: string }) {
       const response = await fetch(`/api/projects/${encodeURIComponent(slug)}/regenerate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(withLocalModelConfig({ documents: [number] })),
+        body: JSON.stringify({ documents: [number] }),
       });
       const data = await readJsonResponse<{ status?: string; documentsStatus?: Record<string, DocumentStatusView>; error?: string; errorCode?: string }>(response);
       if (!response.ok) {

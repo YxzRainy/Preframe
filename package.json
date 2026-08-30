@@ -7,11 +7,11 @@
     "piance": "dist/index.js"
   },
   "scripts": {
-    "dev": "next dev web --webpack",
+    "dev": "next dev web --webpack --hostname 127.0.0.1",
     "dev:cli": "tsx src/index.ts",
-    "dev:web": "next dev web --webpack",
+    "dev:web": "next dev web --webpack --hostname 127.0.0.1",
     "build:web": "next build web --webpack",
-    "web": "next start web",
+    "web": "next start web --hostname 127.0.0.1",
     "generate": "tsx src/index.ts generate",
     "refine": "tsx src/index.ts refine",
     "scan": "tsx src/index.ts scan",

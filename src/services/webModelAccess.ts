@@ -9,13 +9,9 @@ import {
 export const WEB_MODEL_NAME = "deepseek-v4-flash";
 const DEEPSEEK_PUBLIC_BASE_URL = "https://api.deepseek.com/v1";
 
-interface RequestModelConfig {
-  apiKey?: unknown;
-}
-
 export interface WebModelAccess {
   config: ModelConfig;
-  source: "browser" | "default";
+  source: "env";
 }
 
 export class WebModelAccessError extends Error {
@@ -32,12 +28,6 @@ export class WebModelAccessError extends Error {
 
 function defaultBaseUrl(): string {
   return process.env.DEEPSEEK_BASE_URL?.trim() || DEEPSEEK_PUBLIC_BASE_URL;
-}
-
-function requestModelConfig(body: Record<string, unknown>): RequestModelConfig | null {
-  const value = body.modelConfig;
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  return value as RequestModelConfig;
 }
 
 function createDeepSeekFlashConfig(apiKey: string, baseURL: string): ModelConfig {
@@ -68,30 +58,18 @@ export function publicWebModelConfig(): PublicModelConfig {
   };
 }
 
-export function getWebModelAccess(body: Record<string, unknown>): WebModelAccess {
-  const custom = requestModelConfig(body);
-  const customApiKey = typeof custom?.apiKey === "string" ? custom.apiKey.trim() : "";
-  if (customApiKey.length > 512) {
-    throw new WebModelAccessError("DeepSeek API Key 格式无效。", 400, "CUSTOM_MODEL_UNAVAILABLE");
-  }
-  if (customApiKey) {
-    return {
-      config: createDeepSeekFlashConfig(customApiKey, DEEPSEEK_PUBLIC_BASE_URL),
-      source: "browser",
-    };
-  }
-
-  const defaultApiKey = process.env.DEEPSEEK_API_KEY?.trim() || "";
-  if (!defaultApiKey) {
+export function getWebModelAccess(_body: Record<string, unknown> = {}): WebModelAccess {
+  const apiKey = process.env.DEEPSEEK_API_KEY?.trim() || "";
+  if (!apiKey) {
     throw new WebModelAccessError(
-      "服务器默认 DeepSeek Flash 暂不可用，请在模型设置中配置自己的 DeepSeek API Key。",
+      "本机尚未配置 DeepSeek API Key，请在模型设置中保存到项目 .env 文件。",
       503,
       "DEFAULT_MODEL_UNAVAILABLE",
     );
   }
   return {
-    config: createDeepSeekFlashConfig(defaultApiKey, defaultBaseUrl()),
-    source: "default",
+    config: createDeepSeekFlashConfig(apiKey, defaultBaseUrl()),
+    source: "env",
   };
 }
 
@@ -114,16 +92,8 @@ export async function runWithWebModelAccess<T>(
   } catch (error) {
     const unavailable = containsModelFailure(error, new Set(["auth", "config", "rate_limit", "server", "timeout"]));
     if (!unavailable) throw error;
-    if (access.source === "default") {
-      throw new WebModelAccessError(
-        "服务器默认 DeepSeek Flash 暂不可用，请在模型设置中配置自己的 DeepSeek API Key。",
-        503,
-        "DEFAULT_MODEL_UNAVAILABLE",
-        { cause: error },
-      );
-    }
     throw new WebModelAccessError(
-      "你的 DeepSeek API Key 当前不可用，请检查密钥或稍后重试。",
+      "本机 .env 中的 DeepSeek API Key 当前不可用，请检查密钥或稍后重试。",
       400,
       "CUSTOM_MODEL_UNAVAILABLE",
       { cause: error },

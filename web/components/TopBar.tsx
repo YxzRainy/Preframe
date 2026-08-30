@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { List, MagnifyingGlass, MoonStars, Sun } from "@phosphor-icons/react";
 import { StatusBadge } from "./StatusBadge";
 import { Modal } from "./Modal";
+import { ModelStatusBadge } from "./ModelStatusBadge";
 import { isPrimaryProjectDocument, PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinitions";
 import { readJsonResponse } from "../lib/readJsonResponse";
 
@@ -149,13 +150,7 @@ export function TopBar({ initialProfile }: TopBarProps) {
         <span><img src="/brand-icon.png" alt="片策" /></span>
         <strong>片策</strong>
       </div>
-      <div className="topbar-page-title">
-        {currentProject.title && <h2>{currentProject.title}</h2>}
-      </div>
       <div className="topbar-actions">
-        <button type="button" className="topbar-search-trigger" aria-label="搜索项目与文档" onClick={() => window.dispatchEvent(new Event("preframe-open-command-palette"))}>
-          <MagnifyingGlass size={16} weight="bold" /><span>搜索</span><kbd>⌘K</kbd>
-        </button>
         <button
           type="button"
           className="theme-toggle"
@@ -173,10 +168,19 @@ export function TopBar({ initialProfile }: TopBarProps) {
         >
           {theme === "dark" ? <Sun size={17} weight="duotone" /> : <MoonStars size={17} weight="duotone" />}
         </button>
+        <button type="button" className="topbar-search-trigger" aria-label="搜索项目与文档" onClick={() => window.dispatchEvent(new Event("preframe-open-command-palette"))}>
+          <MagnifyingGlass size={16} weight="bold" /><span>搜索</span><kbd>⌘K</kbd>
+        </button>
       </div>
-      <div className="creator-entry" aria-label="创作者资料" onClick={() => window.dispatchEvent(new Event("piance-open-sidebar"))}>
-        <span className="creator-avatar">{showAvatarImage ? <img src={avatarSrc} alt={`${profile.name}的头像`} onError={() => setAvatarFailed(true)} /> : <i />}</span>
-        <div><strong>{profile.name}</strong></div>
+      <div className="topbar-page-title">
+        {currentProject.title && <h2>{currentProject.title}</h2>}
+      </div>
+      <div className="topbar-account">
+        <span className="topbar-model-status"><ModelStatusBadge compact /></span>
+        <div className="creator-entry" aria-label="创作者资料" onClick={() => window.dispatchEvent(new Event("piance-open-sidebar"))}>
+          <span className="creator-avatar">{showAvatarImage ? <img src={avatarSrc} alt={`${profile.name}的头像`} onError={() => setAvatarFailed(true)} /> : <i />}</span>
+          <div><strong>{profile.name}</strong></div>
+        </div>
       </div>
       <button className="mobile-menu-button" type="button" aria-label="打开菜单" onClick={() => window.dispatchEvent(new Event("piance-open-sidebar"))}>
         <List size={21} weight="bold" />

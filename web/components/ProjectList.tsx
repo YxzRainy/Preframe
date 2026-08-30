@@ -174,7 +174,7 @@ export function ProjectList() {
           <p>切换筛选条件，或创建新的内容项目。</p>
         </div>
       ) : (
-      <div className="project-grid">
+      <div key={filter} className="project-grid">
         {filteredProjects.map((project) => (
         <article className="project-card" key={project.slug}>
           <Link className="project-card-link" href={`/projects/${encodeURIComponent(project.slug)}`}>

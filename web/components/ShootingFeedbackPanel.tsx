@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { ShotTask } from "../../src/types/shotTask";
 import type { FeedbackRevision, ShotActualOutcome, ShotActualRecord, ShootingFeedback } from "../../src/types/shootingFeedback";
 import { readJsonResponse } from "../lib/readJsonResponse";
-import { promptForModelConfig, withLocalModelConfig } from "../lib/localModelConfig";
+import { promptForModelConfig } from "../lib/modelConfigClient";
 
 interface ShootingFeedbackPanelProps {
   slug: string;
@@ -138,7 +138,7 @@ export function ShootingFeedbackPanel({ slug, shotTasks, onChanged }: ShootingFe
       const res = await fetch(`/api/projects/${encodeURIComponent(slug)}/feedback/revise`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(withLocalModelConfig({ feedbackId: draft.id })),
+        body: JSON.stringify({ feedbackId: draft.id }),
       });
       const data = await readJsonResponse<{ revision?: FeedbackRevision; error?: string; errorCode?: string }>(res);
       if (!res.ok || !data.revision) {

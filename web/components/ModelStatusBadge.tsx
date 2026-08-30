@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { readLocalModelConfig } from "../lib/localModelConfig";
 import { readJsonResponse } from "../lib/readJsonResponse";
 
 interface StatusView {
@@ -9,31 +8,65 @@ interface StatusView {
   label: string;
 }
 
-export function ModelStatusBadge() {
-  const [view, setView] = useState<StatusView>({ tone: "muted", label: "模型状态读取中" });
+interface ModelStatusBadgeProps {
+  compact?: boolean;
+}
 
-  async function refresh() {
-    if (readLocalModelConfig()) {
-      setView({ tone: "success", label: "个人 DeepSeek Flash 已配置" });
-      return;
-    }
+const statusLabels: Record<StatusView["tone"], string> = {
+  success: "AI 能力已启用",
+  warning: "AI 能力尚未启用",
+  error: "AI 能力异常",
+  muted: "AI 能力检查中",
+};
+
+export function ModelStatusBadge({ compact = false }: ModelStatusBadgeProps) {
+  const [view, setView] = useState<StatusView>({ tone: "muted", label: statusLabels.muted });
+  const [refreshing, setRefreshing] = useState(false);
+
+  async function loadConfiguration() {
     const response = await fetch("/api/model-config", { cache: "no-store" });
     const data = await readJsonResponse<{ config?: { configured?: boolean } }>(response);
     setView(response.ok && data.config?.configured
-      ? { tone: "success", label: "服务器 DeepSeek Flash 可用" }
-      : { tone: "warning", label: "请配置 DeepSeek API Key" });
+      ? { tone: "success", label: statusLabels.success }
+      : { tone: "warning", label: statusLabels.warning });
+  }
+
+  async function refreshConnection() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const response = await fetch("/api/model-config/test", { method: "POST", cache: "no-store" });
+      setView(response.ok
+        ? { tone: "success", label: statusLabels.success }
+        : { tone: "error", label: statusLabels.error });
+    } catch {
+      setView({ tone: "error", label: statusLabels.error });
+    } finally {
+      setRefreshing(false);
+    }
   }
 
   useEffect(() => {
-    refresh().catch(() => setView({ tone: "error", label: "模型状态读取失败" }));
-    const onUpdate = () => refresh().catch(() => undefined);
+    loadConfiguration().catch(() => setView({ tone: "error", label: statusLabels.error }));
+    const onUpdate = () => loadConfiguration().catch(() => setView({ tone: "error", label: statusLabels.error }));
     window.addEventListener("piance-model-config-updated", onUpdate);
-    window.addEventListener("storage", onUpdate);
-    return () => {
-      window.removeEventListener("piance-model-config-updated", onUpdate);
-      window.removeEventListener("storage", onUpdate);
-    };
+    return () => window.removeEventListener("piance-model-config-updated", onUpdate);
   }, []);
 
-  return <span className={`model-status-badge model-status-${view.tone}`}><i />{view.label}</span>;
+  const label = refreshing ? statusLabels.muted : compact ? statusLabels[view.tone] : view.label;
+
+  return (
+    <button
+      type="button"
+      className={`model-status-badge model-status-${view.tone}`}
+      aria-label="刷新模型连接状态"
+      aria-live="polite"
+      disabled={refreshing}
+      title="点击刷新模型连接状态"
+      onClick={() => void refreshConnection()}
+    >
+      <i aria-hidden="true" />
+      {label}
+    </button>
+  );
 }

@@ -6,10 +6,7 @@ import { formatRelativeTime } from "../dashboard/types";
 import { readJsonResponse } from "../../lib/readJsonResponse";
 import {
   ArrowUpRight,
-  DotsThree,
-  Lightbulb,
   PencilSimple,
-  Sparkle,
   Trash,
   X,
 } from "@phosphor-icons/react";
@@ -18,12 +15,10 @@ const DRAFT_STORAGE_KEY = "preframe:ideas:draft";
 
 type Draft = {
   text: string;
-  source: string;
-  tags: string;
   savedAt: string;
 };
 
-const EMPTY_DRAFT: Draft = { text: "", source: "", tags: "", savedAt: "" };
+const EMPTY_DRAFT: Draft = { text: "", savedAt: "" };
 
 function parseIdeaDraft(text: string) {
   const lines = text.split("\n");
@@ -38,10 +33,8 @@ export function IdeaInbox() {
   const [error, setError] = useState("");
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [saving, setSaving] = useState(false);
-  const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Idea | null>(null);
-  const [showDetails, setShowDetails] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const load = useCallback(async () => {
@@ -68,7 +61,6 @@ export function IdeaInbox() {
       const parsed = JSON.parse(stored) as Partial<Draft>;
       if (typeof parsed.text === "string") {
         setDraft({ ...EMPTY_DRAFT, ...parsed });
-        setDraftStatus("saved");
       }
     } catch {
       localStorage.removeItem(DRAFT_STORAGE_KEY);
@@ -82,20 +74,17 @@ export function IdeaInbox() {
   }, [load]);
 
   useEffect(() => {
-    if (!draft.text.trim() && !draft.source.trim() && !draft.tags.trim()) {
+    if (!draft.text.trim()) {
       localStorage.removeItem(DRAFT_STORAGE_KEY);
-      setDraftStatus("idle");
       return;
     }
-    setDraftStatus("saving");
     const timer = window.setTimeout(() => {
       const next = { ...draft, savedAt: new Date().toISOString() };
       localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(next));
       setDraft((current) => ({ ...current, savedAt: next.savedAt }));
-      setDraftStatus("saved");
     }, 420);
     return () => window.clearTimeout(timer);
-  }, [draft.text, draft.source, draft.tags]);
+  }, [draft.text]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -114,17 +103,15 @@ export function IdeaInbox() {
     setError("");
     try {
       const { title, note } = parseIdeaDraft(draft.text.trim());
-      const tags = draft.tags.split(/[,，\s]+/).map((t) => t.trim()).filter(Boolean);
       const response = await fetch("/api/ideas", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, note: note || undefined, source: draft.source.trim() || undefined, tags }),
+        body: JSON.stringify({ title, note: note || undefined }),
       });
       const data = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(data.error || "灵感创建失败。");
       localStorage.removeItem(DRAFT_STORAGE_KEY);
       setDraft(EMPTY_DRAFT);
-      setShowDetails(false);
       await load();
       textareaRef.current?.focus();
     } catch (err) {
@@ -181,18 +168,11 @@ export function IdeaInbox() {
 
   const savedIdeas = useMemo(() => ideas.filter((idea) => !idea.convertedProjectSlug), [ideas]);
   const convertedIdeas = useMemo(() => ideas.filter((idea) => Boolean(idea.convertedProjectSlug)), [ideas]);
-  const hasDraft = Boolean(draft.text.trim() || draft.source.trim() || draft.tags.trim());
-
   return (
     <section className="ideas-workspace" aria-label="灵感">
       <header className="ideas-hero-row">
         <h1>灵感</h1>
-        <div className={`ideas-live-state ${draftStatus === "saving" ? "is-saving" : ""}`} aria-live="polite" aria-label={draftStatus === "saving" ? "正在保存草稿" : "草稿自动保存已开启"} title={draftStatus === "saving" ? "保存中" : "草稿自动保存已开启"}>
-          <span className="ideas-live-pulse" />
-          {draftStatus === "saving" && <span>保存中</span>}
-        </div>
       </header>
-
       <div className="ideas-grid">
         <div className="ideas-capture-column">
           <form className="ideas-capture-card" onSubmit={(event) => { event.preventDefault(); void create(); }}>
@@ -202,21 +182,11 @@ export function IdeaInbox() {
               value={draft.text}
               onChange={(event) => setDraft((current) => ({ ...current, text: event.target.value }))}
               placeholder="写下一个想法…"
-              rows={7}
+              rows={6}
               autoFocus
             />
-            {showDetails && (
-              <div className="ideas-detail-fields">
-                <input aria-label="灵感来源" value={draft.source} onChange={(event) => setDraft((current) => ({ ...current, source: event.target.value }))} placeholder="来源" />
-                <input aria-label="灵感标签" value={draft.tags} onChange={(event) => setDraft((current) => ({ ...current, tags: event.target.value }))} placeholder="标签" />
-              </div>
-            )}
             <footer className="ideas-capture-footer">
-              <button type="button" className={`ideas-detail-toggle ${showDetails ? "is-open" : ""}`} aria-label={showDetails ? "收起来源和标签" : "添加来源和标签"} title={showDetails ? "收起来源和标签" : "添加来源和标签"} onClick={() => setShowDetails((current) => !current)}>
-                <DotsThree size={19} weight="bold" />
-              </button>
               <div className="ideas-capture-actions">
-                <span className="ideas-shortcut" aria-label="按 Command 加 Enter 保存">⌘ ↵</span>
                 <button type="submit" className="ideas-save-button" disabled={saving || !draft.text.trim()}>
                   {saving ? "保存中" : "保存"}<ArrowUpRight size={15} weight="bold" />
                 </button>
@@ -228,13 +198,12 @@ export function IdeaInbox() {
         <aside className="ideas-side-column">
           <div className="ideas-side-heading">
             <div><span>已记录</span><strong>{savedIdeas.length + convertedIdeas.length}</strong></div>
-            <Lightbulb size={19} weight="duotone" aria-hidden="true" />
           </div>
           {error && <div className="idea-error">{error}</div>}
           {loading ? (
             <p className="idea-muted">读取中…</p>
           ) : ideas.length === 0 ? (
-            <div className="ideas-empty-state" aria-label="暂无灵感"><Sparkle size={25} weight="duotone" aria-hidden="true" /></div>
+            <p className="ideas-empty-state">暂无记录</p>
           ) : (
             <div className="ideas-stream">
               {savedIdeas.map((idea) => (

@@ -131,15 +131,15 @@ export function CreatorProfileModal({ open = false, onClose = () => undefined, o
       <div className="profile-avatar-editor">
         <span className="profile-avatar-preview">{showAvatarImage ? <img src={avatarSrc} alt={`${profile.name}的头像预览`} onError={() => setAvatarFailed(true)} /> : <i />}</span>
         <div className="avatar-upload-copy">
-          <span>头像</span>
+          {!embedded && <span>头像</span>}
           <input ref={avatarInputRef} className="avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => chooseAvatar(event.target.files?.[0])} />
-          <button className="avatar-upload-control" type="button" onClick={() => avatarInputRef.current?.click()}>更换头像</button>
-          <small>{avatarFile ? avatarFile.name : "PNG / JPG / WEBP，最大 10MB。"}</small>
+          <button className="avatar-upload-control" type="button" onClick={() => avatarInputRef.current?.click()}>{embedded ? "更换" : "更换头像"}</button>
+          <small>{avatarFile ? avatarFile.name : embedded ? "PNG、JPG 或 WEBP" : "PNG / JPG / WEBP，最大 10MB。"}</small>
         </div>
       </div>
-      <label><span>昵称</span><input required value={nameInput} onChange={(event) => setNameInput(event.target.value)} placeholder="创作者" /></label>
+      <label className="settings-profile-name">{!embedded && <span>昵称</span>}<input aria-label="昵称" required value={nameInput} onChange={(event) => setNameInput(event.target.value)} placeholder="创作者昵称" /></label>
       {error && <p className="settings-modal-error">{error}</p>}
-      {embedded && <div className="settings-inline-actions"><button type="button" className="secondary-button" onClick={resetProfile} disabled={saving}>恢复默认</button><button type="submit" className="primary-button" disabled={saving}>{saving ? "保存中" : "保存"}</button></div>}
+      {embedded && <div className="settings-inline-actions"><button type="button" className="secondary-button" onClick={resetProfile} disabled={saving}>恢复默认</button><button type="submit" className="primary-button" disabled={saving}>{saving ? "保存中" : "保存资料"}</button></div>}
     </form>
   );
 

@@ -1,12 +1,12 @@
 # Preframe 项目交接文档
 
-> 更新日期：2026-08-29
+> 更新日期：2026-08-30
 > 项目根目录：`/Users/YxzRainy/Documents/Vibecoding/Preframe`
 > 当前事实来源：`PROJECT_CONTEXT.md`、`docs/PROJECT_BLUEPRINT.md` 与实际代码。
 
 ## 一、产品边界
 
-片策是本地运行的短视频生产工作台，同时提供 CLI 和 Next.js Web 界面。核心数据保存在本地 `output/` 和 `.piance/`，不依赖应用账号、数据库或云端协作。
+片策是本地运行的短视频生产工作台，同时提供 CLI 和 Next.js Web 界面。Web 默认只监听 `127.0.0.1`；核心数据保存在本地 `output/` 和 `.piance/`，DeepSeek API Key 保存在项目 `.env`，不依赖应用账号、数据库或云端协作。
 
 发布中心、平台账号管理、自动上传、发布 worker、发布会话和发布任务已经永久移除。产品仍保留 `03_发布与复盘.md`，用于准备平台文案、人工发布后记录真实链接与数据，并据此复盘。
 

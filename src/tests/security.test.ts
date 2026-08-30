@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { callModel, modelConfigFromInput, withModelConfig, type ModelConfig } from "../services/modelClient.js";
 import { getWebModelAccess, WEB_MODEL_NAME, WebModelAccessError } from "../services/webModelAccess.js";
+import { clearDeepSeekApiKey, saveDeepSeekApiKey } from "../services/envFile.js";
 
 function config(apiKey: string): ModelConfig {
   return {
@@ -58,16 +62,27 @@ test("模型配置输入会保留已有 Key，但不会接受占位 Key", () => 
 
 
 
-test("Web 模型访问固定为 DeepSeek Flash，并优先使用浏览器随请求提供的 Key", () => {
-  const access = getWebModelAccess({ modelConfig: { apiKey: "browser-deepseek-key" } });
-  assert.equal(access.source, "browser");
-  assert.equal(access.config.provider, "deepseek");
-  assert.equal(access.config.model, WEB_MODEL_NAME);
-  assert.equal(access.config.baseURL, "https://api.deepseek.com/v1");
-  assert.equal(access.config.apiKey, "browser-deepseek-key");
+test("Web 模型访问固定使用本机 .env Key，不接受浏览器随请求覆盖", () => {
+  const previous = process.env.DEEPSEEK_API_KEY;
+  const previousBaseUrl = process.env.DEEPSEEK_BASE_URL;
+  process.env.DEEPSEEK_API_KEY = "local-env-key";
+  process.env.DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1";
+  try {
+    const access = getWebModelAccess({ modelConfig: { apiKey: "browser-key-must-be-ignored" } });
+    assert.equal(access.source, "env");
+    assert.equal(access.config.provider, "deepseek");
+    assert.equal(access.config.model, WEB_MODEL_NAME);
+    assert.equal(access.config.baseURL, "https://api.deepseek.com/v1");
+    assert.equal(access.config.apiKey, "local-env-key");
+  } finally {
+    if (previous === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = previous;
+    if (previousBaseUrl === undefined) delete process.env.DEEPSEEK_BASE_URL;
+    else process.env.DEEPSEEK_BASE_URL = previousBaseUrl;
+  }
 });
 
-test("服务器默认 Key 缺失时返回可引导个人配置的错误码", () => {
+test("本机 .env Key 缺失时返回配置引导错误码", () => {
   const previous = process.env.DEEPSEEK_API_KEY;
   delete process.env.DEEPSEEK_API_KEY;
   try {
@@ -78,5 +93,32 @@ test("服务器默认 Key 缺失时返回可引导个人配置的错误码", () 
   } finally {
     if (previous === undefined) delete process.env.DEEPSEEK_API_KEY;
     else process.env.DEEPSEEK_API_KEY = previous;
+  }
+});
+
+test("DeepSeek Key 只写入指定的本机 .env 文件并使用私有权限", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "preframe-env-"));
+  const envPath = path.join(directory, ".env");
+  const previousEnvFile = process.env.PIANCE_ENV_FILE;
+  const previousKey = process.env.DEEPSEEK_API_KEY;
+  process.env.PIANCE_ENV_FILE = envPath;
+  await writeFile(envPath, "DEEPSEEK_BASE_URL=https://api.deepseek.com/v1\n", "utf8");
+  try {
+    await saveDeepSeekApiKey("local-secret-key");
+    const saved = await readFile(envPath, "utf8");
+    assert.match(saved, /DEEPSEEK_API_KEY="local-secret-key"/u);
+    assert.match(saved, /DEEPSEEK_BASE_URL=https:\/\/api\.deepseek\.com\/v1/u);
+    assert.equal((await stat(envPath)).mode & 0o777, 0o600);
+    assert.equal(process.env.DEEPSEEK_API_KEY, "local-secret-key");
+
+    await clearDeepSeekApiKey();
+    assert.doesNotMatch(await readFile(envPath, "utf8"), /DEEPSEEK_API_KEY/u);
+    assert.equal(process.env.DEEPSEEK_API_KEY, undefined);
+  } finally {
+    if (previousEnvFile === undefined) delete process.env.PIANCE_ENV_FILE;
+    else process.env.PIANCE_ENV_FILE = previousEnvFile;
+    if (previousKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = previousKey;
+    await rm(directory, { recursive: true, force: true });
   }
 });

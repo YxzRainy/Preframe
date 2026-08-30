@@ -4,11 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowClockwise,
   ArrowRight,
-  Brain,
   Check,
   CheckCircle,
   CaretDown,
-  Lightning,
   Pause,
   Sparkle,
   X,
@@ -89,47 +87,33 @@ export function CreatorLearningPanel() {
     if (nextAction.target) scrollToSection(nextAction.target);
   }
 
-  return <div className="learning-panel">
-    <section className="learning-hero" aria-labelledby="learning-hero-title">
-      <div className="learning-hero-copy">
-        <span className="learning-eyebrow"><Brain size={14} weight="fill" /> 创作经验库</span>
-        <h3 id="learning-hero-title">让每次复盘，帮到下一次创作。</h3>
-        <p>系统只提出候选经验；是否真实、是否值得复用，都由你决定。被采用的经验只作为新项目的参考，不会替你做决定。</p>
-      </div>
-      <div className="learning-hero-action">
-        <span>{learning ? formatScannedAt(learning.lastScannedAt) : "正在读取复盘"}</span>
-        <button type="button" className="primary-button" disabled={Boolean(busy) || !nextAction} onClick={runNextAction}>
-          {nextAction?.scan ? <ArrowClockwise size={16} /> : <ArrowRight size={16} />}{busy === "scan" ? "检查中…" : nextAction?.label || "准备中…"}
-        </button>
-      </div>
+  const itemCount = pendingFacts.length + candidatePatterns.length + strategies.length;
+
+  return <div className="learning-panel learning-panel-compact">
+    <section className="learning-toolbar">
+      <div><strong>经验库</strong><span>{learning ? `${pendingFacts.length} 条待确认 · ${strategies.filter((item) => item.status === "active").length} 条生效中` : "正在读取…"}</span></div>
+      <button type="button" className="secondary-button" disabled={Boolean(busy) || !nextAction} onClick={runNextAction}>
+        {nextAction?.scan ? <ArrowClockwise size={15} /> : <ArrowRight size={15} />}{busy === "scan" ? "检查中…" : nextAction?.label || "读取中…"}
+      </button>
     </section>
 
-    {learning && nextAction && <section className="learning-now" aria-label="当前要做的事"><span className="learning-now-icon"><Lightning size={16} weight="fill" /></span><div><strong>现在：{nextAction.label}</strong><p>{nextAction.description}</p></div></section>}
-    {learning && <LearningPath learning={learning} />}
     {message && <p className="learning-feedback" role="status"><CheckCircle size={15} weight="fill" />{message}</p>}
     {error && <p className="settings-modal-error" role="alert">{error}</p>}
 
-    <LearningSection id="learning-facts" step="01" title="先确认：这次到底发生了什么" description="这里是项目里记录的现场问题和真实发布数据。确认它，只代表事实无误；还不会影响以后项目。" count={pendingFacts.length} emptyTitle="先开始一次复盘" empty="系统会从已有的拍摄记录和发布复盘中找出候选事实。">
-      {pendingFacts.map((fact) => <FactCard key={fact.id} fact={fact} busy={busy} decide={(decision) => post({ kind: "fact", id: fact.id, decision }, `${fact.id}:${decision}`, decision === "confirm" ? "已确认：这条复盘会进入跨项目比对。" : "已略过：这条内容不会参与后续学习。")}/>) }
-    </LearningSection>
+    {learning && itemCount === 0 && <div className="learning-empty-compact"><Sparkle size={18} weight="duotone" /><div><strong>还没有可复用经验</strong><span>{formatScannedAt(learning.lastScannedAt)}。完成项目复盘后，再检查一次。</span></div></div>}
 
-    <LearningSection id="learning-patterns" step="02" title="再决定：这条经验要不要复用" description="只有来自至少两个不同项目的已确认事实，才会出现在这里。你可以查看证据，再决定是否把它作为今后的参考。" count={candidatePatterns.length} emptyTitle="还没有可采用的经验" empty="确认更多来自不同项目的事实后，系统会把重复出现的做法带到这里。">
-      {candidatePatterns.map((pattern) => <PatternCard key={pattern.id} pattern={pattern} factsById={factsById} busy={busy} decide={(decision) => post({ kind: "pattern", id: pattern.id, decision }, `${pattern.id}:${decision}`, decision === "confirm" ? "已采用：它会作为新项目的创作参考。" : "已暂不采用：这条经验不会影响新项目。")}/>) }
-    </LearningSection>
+    {pendingFacts.length > 0 && <LearningSection id="learning-facts" step="01" title="待确认事实" description="确认真实发生的情况" count={pendingFacts.length} emptyTitle="" empty="">
+      {pendingFacts.map((fact) => <FactCard key={fact.id} fact={fact} busy={busy} decide={(decision) => post({ kind: "fact", id: fact.id, decision }, `${fact.id}:${decision}`, decision === "confirm" ? "已加入跨项目比对。" : "已略过。")}/>) }
+    </LearningSection>}
 
-    <LearningSection id="learning-strategies" step="03" title="正在影响新项目的创作经验" description="这是你已经采用的经验库。它们会被带入新项目作为参考；遇到不适用的方向，随时暂停即可。" count={strategies.length} emptyTitle="你的创作经验库还是空的" empty="当你采用一条跨项目经验后，它会出现在这里，并在新项目中提供参考。">
-      {strategies.map((strategy) => <StrategyCard key={strategy.id} strategy={strategy} factsById={factsById} busy={busy} decide={(decision) => post({ kind: "strategy", id: strategy.id, decision }, `${strategy.id}:${decision}`, decision === "retire" ? "已暂停：新项目不再参考这条经验。" : "已恢复：新项目会再次参考这条经验。")}/>) }
-    </LearningSection>
+    {candidatePatterns.length > 0 && <LearningSection id="learning-patterns" step="02" title="候选经验" description="决定是否用于今后的项目" count={candidatePatterns.length} emptyTitle="" empty="">
+      {candidatePatterns.map((pattern) => <PatternCard key={pattern.id} pattern={pattern} factsById={factsById} busy={busy} decide={(decision) => post({ kind: "pattern", id: pattern.id, decision }, `${pattern.id}:${decision}`, decision === "confirm" ? "已采用。" : "暂不采用。")}/>) }
+    </LearningSection>}
+
+    {strategies.length > 0 && <LearningSection id="learning-strategies" step="03" title="已采用经验" description="新项目会参考这些经验" count={strategies.length} emptyTitle="" empty="">
+      {strategies.map((strategy) => <StrategyCard key={strategy.id} strategy={strategy} factsById={factsById} busy={busy} decide={(decision) => post({ kind: "strategy", id: strategy.id, decision }, `${strategy.id}:${decision}`, decision === "retire" ? "已暂停。" : "已恢复。")}/>) }
+    </LearningSection>}
   </div>;
-}
-
-function LearningPath({ learning }: { learning: CreatorLearningSummary }) {
-  const stages = [
-    { number: "01", title: "确认事实", detail: learning.counts.pendingFacts ? `${learning.counts.pendingFacts} 条待处理` : learning.counts.confirmedFacts ? `${learning.counts.confirmedFacts} 条已确认` : "等待复盘", active: Boolean(learning.counts.pendingFacts), complete: !learning.counts.pendingFacts && learning.counts.confirmedFacts > 0 },
-    { number: "02", title: "采用经验", detail: learning.counts.candidatePatterns ? `${learning.counts.candidatePatterns} 条待决定` : "跨项目比对", active: !learning.counts.pendingFacts && Boolean(learning.counts.candidatePatterns), complete: !learning.counts.pendingFacts && !learning.counts.candidatePatterns && learning.counts.activeStrategies > 0 },
-    { number: "03", title: "用于新项目", detail: learning.counts.activeStrategies ? `${learning.counts.activeStrategies} 条正在使用` : "等待采用", active: !learning.counts.pendingFacts && !learning.counts.candidatePatterns && Boolean(learning.counts.activeStrategies), complete: false },
-  ];
-  return <ol className="learning-path" aria-label="创作者学习流程">{stages.map((stage) => <li key={stage.number} className={`${stage.active ? "is-active" : ""} ${stage.complete ? "is-complete" : ""}`}><span className="learning-path-index">{stage.complete ? <Check size={13} weight="bold" /> : stage.number}</span><div><strong>{stage.title}</strong><small>{stage.detail}</small></div></li>)}</ol>;
 }
 
 function LearningSection({ id, step, title, description, count, emptyTitle, empty, children }: { id: string; step: string; title: string; description: string; count: number; emptyTitle: string; empty: string; children: React.ReactNode }) {

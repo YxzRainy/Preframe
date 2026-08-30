@@ -2,7 +2,7 @@
 
 「片策」是一套本地运行的短视频内容生产工作台。输入选题、平台、内容主体、内容领域与内容风格后，它生成三份一致的核心工作稿：`01_创作简报.md`、`02_拍摄执行稿.md`、`03_发布与复盘.md`。
 
-项目同时提供本地 CLI 和 Next.js 可视化工作台。应用本身不要求登录，也不包含平台账号管理、自动上传或发布中心；`03_发布与复盘.md` 只负责整理发布文案、记录真实发布结果和复盘。默认 DeepSeek API Key 只从服务端环境变量读取，用户也可以在自己的浏览器中保存个人 DeepSeek API Key。
+项目同时提供本地 CLI 和 Next.js 可视化工作台。应用只监听 `127.0.0.1`，不提供公开部署、账号系统、云端项目库、自动上传或发布中心。DeepSeek API Key 保存在项目根目录 `.env`；项目、配置、素材索引、备份和生成文件均写入本机文件系统。
 
 ## 环境要求
 
@@ -35,7 +35,7 @@ npm run build:web
 npm run web
 ```
 
-Web API Route 只在 Node.js 服务端读取默认 DeepSeek 配置并调用模型，部署者的默认 API Key 不会进入浏览器代码。当前 Web 端固定使用 `deepseek-v4-flash`。如果服务器默认模型未配置、额度不足或认证失败，页面会提示用户在模型设置中填写自己的 DeepSeek API Key；个人 Key 只保存在该浏览器的 `localStorage`，不会写入服务器数据库。Web 服务和素材目录必须位于同一台电脑时，素材扫描框应填写服务端可访问的绝对路径。
+Web API Route 从本机 `.env` 读取 DeepSeek 配置。也可以在“设置 → 模型”中输入自己的 Key，应用会将它写回本机 `.env`，不会保存到浏览器 `localStorage`。Web 端固定使用 `deepseek-v4-flash`；素材扫描和项目文件操作都针对运行片策的这台电脑。
 
 ## 配置封面图片生成 API（可选）
 
@@ -78,23 +78,15 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 - 当前 Web 端固定使用 `deepseek-v4-flash`；`DEEPSEEK_MODEL` 仅保留给本地 CLI 使用。
 - `.env` 已加入 `.gitignore`，不要将真实密钥提交到 Git。
 
-## 生产环境部署配置
+## 本地数据边界
 
-应用本身不需要 Supabase、注册或通用账号登录。生产部署时，在托管平台的服务端 Environment Variables 中配置：
-
-```env
-DEEPSEEK_API_KEY=你的生产默认_Key
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
-DEEPSEEK_MODEL=deepseek-v4-flash
-```
-
-- Netlify 中应把 `DEEPSEEK_API_KEY` 配置为服务端环境变量，不要使用 `NEXT_PUBLIC_` 前缀。
-- 本地开发使用项目根目录 `.env` 中的同名变量。
-- Web 端当前只支持 DeepSeek Flash，不允许浏览器修改服务器默认 Key。
-- 服务器默认模型不可用时，用户可在模型设置中保存个人 Key。个人 Key 以明文保存在用户自己的浏览器 `localStorage`，并仅在模型请求时通过 HTTPS 发送给本站服务端代理。
-- 应只通过 HTTPS 部署，并配置合理的访问频率和费用告警，避免公开默认 Key 被无限消耗。
-- 片策不保存平台账号、不代替用户上传内容；最终发布由用户在目标平台人工完成，再把真实链接和数据写回 `03_发布与复盘.md`。
-- 反向代理或静态文件服务不得暴露 `.env`、`.piance/`、`output/` 和备份目录。
+- `npm run dev` 和 `npm run web` 默认只监听 `127.0.0.1`，局域网和公网设备无法访问。
+- 项目文档与封面保存在本机 `output/` 或你选择的本地工作区。
+- 应用设置、灵感、素材索引和备份保存在本机 `.piance/`。
+- DeepSeek API Key 保存在本机 `.env`，不会写入项目输出、浏览器存储或配置备份。
+- 项目文件不会上传到片策自建云端，因为项目没有云端存储功能。
+- 使用 DeepSeek 或图片生成接口时，为完成生成所提交的文字提示和必要内容仍会发送给对应 API 供应商；如果需要完全离线，必须改用本地模型。
+- 最终发布由用户在目标平台人工完成，再把真实链接和数据写回 `03_发布与复盘.md`。
 
 如果 API Key 缺失、网络失败、API 报错、模型返回为空或输出无法解析，CLI 会显示对应错误，不会写入不完整的项目。
 

@@ -111,13 +111,13 @@ export function AccountMemoryModal({ open = false, onClose = () => undefined, em
   const form = (
     <form id="account-memory-form" className="modal-form creation-preference-form" onSubmit={save}>
       <label className="creation-preference-field">
-        <span>默认要求</span>
-        <textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} rows={8} placeholder="例如：面向小红书职场新人；先讲结论，表达口语化；避免“赋能、闭环”。" />
+        {!embedded && <span>默认要求</span>}
+        <textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} rows={embedded ? 5 : 8} placeholder="例如：面向职场新人；先讲结论，表达口语化；避免“赋能、闭环”。" />
       </label>
-      <p className="creation-preference-note">留空则不参与生成。</p>
+      {!embedded && <p className="creation-preference-note">留空则不参与生成。</p>}
       {message && <p className="settings-modal-copy">{message}</p>}
       {error && <p className="settings-modal-error">{error}</p>}
-      {embedded && <div className="settings-inline-actions"><button type="submit" className="primary-button" disabled={busy}>{busy ? "保存中…" : "保存"}</button></div>}
+      {embedded && <div className="settings-inline-actions"><button type="submit" className="primary-button" disabled={busy}>{busy ? "保存中…" : "保存要求"}</button></div>}
     </form>
   );
 

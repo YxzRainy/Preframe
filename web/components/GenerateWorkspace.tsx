@@ -16,7 +16,7 @@ import { formatDuration } from "../../src/utils/generationTiming";
 import { ApiPayloadError, readJsonResponse } from "../lib/readJsonResponse";
 import { ModelConfigModal } from "./ModelConfigModal";
 import { PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinitions";
-import { readLocalModelConfig, withLocalModelConfig } from "../lib/localModelConfig";
+
 
 interface GenerateResponse {
   success: boolean;
@@ -142,13 +142,10 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
     const response = await fetch("/api/model-config", { cache: "no-store" });
     const data = await readJsonResponse<{ config?: { providerLabel: string; model: string; configured: boolean }; error?: string }>(response);
     if (!response.ok || !data.config) throw new Error(data.error || "生成服务状态读取失败。");
-    const localConfig = readLocalModelConfig();
-    const configured = Boolean(localConfig || data.config.configured);
-    const message = localConfig
-      ? "当前使用保存在这个浏览器中的 DeepSeek API Key"
-      : data.config.configured
-        ? "服务器 DeepSeek Flash 已就绪"
-        : "服务器默认模型不可用，请配置自己的 DeepSeek API Key";
+    const configured = Boolean(data.config.configured);
+    const message = configured
+      ? "本机 .env 中的 DeepSeek Flash 已就绪"
+      : "请先把自己的 DeepSeek API Key 保存到本机 .env";
     setModelStatus({
       providerLabel: data.config.providerLabel,
       model: data.config.model,
@@ -345,7 +342,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
     const pendingName = form.projectName || form.topic || "内容项目";
     window.dispatchEvent(new CustomEvent("piance-current-project", { detail: { title: pendingName, status: "创建项目目录", tone: "working" } }));
     try {
-      const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(withLocalModelConfig({ ...form, jobId, ideaId: sourceIdeaId || undefined })), signal: abortController.signal });
+      const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, jobId, ideaId: sourceIdeaId || undefined }), signal: abortController.signal });
       const data = await readJsonResponse<GenerateResponse>(response);
       if (cancelledJobIdRef.current === jobId || data.cancelled) return;
       if (data.job) {

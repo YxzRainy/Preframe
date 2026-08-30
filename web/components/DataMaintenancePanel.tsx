@@ -62,7 +62,7 @@ export function DataMaintenancePanel() {
       const response = await fetch("/api/maintenance/backup", { method: "POST", body: form });
       const data = await readJsonResponse<{ restored?: { restoredFiles: number; rollbackBackupPath: string }; error?: string }>(response);
       if (!response.ok) throw new Error(data.error || "配置恢复失败。");
-      setMessage(`已恢复 ${data.restored?.restoredFiles || 0} 个本地配置文件；恢复前备份已保留，浏览器中的个人 DeepSeek Key 不受影响。`);
+      setMessage(`已恢复 ${data.restored?.restoredFiles || 0} 个本地配置文件；恢复前备份已保留，项目 .env 中的 DeepSeek Key 不参与恢复。`);
       await load();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "配置恢复失败。");
@@ -100,27 +100,26 @@ export function DataMaintenancePanel() {
 
   return (
     <div className="maintenance-panel">
-      <section className="maintenance-block">
-        <div><h3>本地配置备份</h3><p>备份 `.piance` 中的设置、灵感、素材索引和发布记录。浏览器中的个人 DeepSeek Key 不参与备份。</p></div>
-        <div className="maintenance-actions">
-          <button type="button" className="settings-section-action" onClick={downloadBackup}><DownloadSimple size={16} />导出备份</button>
-          <button type="button" className="settings-section-action secondary" onClick={() => restoreInput.current?.click()} disabled={Boolean(busy)}><UploadSimple size={16} />{busy === "restore" ? "恢复中" : "恢复备份"}</button>
-          <input ref={restoreInput} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void restoreBackup(file); }} />
+      <section className="settings-section maintenance-tools">
+        <header><div><h3>备份与版本</h3><p>备份不包含 .env 密钥</p></div></header>
+        <div className="maintenance-row">
+          <div><strong>配置备份</strong><small>.piance 设置与索引</small></div>
+          <div className="maintenance-actions">
+            <button type="button" className="secondary-button" onClick={downloadBackup}><DownloadSimple size={15} />导出</button>
+            <button type="button" className="secondary-button" onClick={() => restoreInput.current?.click()} disabled={Boolean(busy)}><UploadSimple size={15} />{busy === "restore" ? "恢复中…" : "恢复"}</button>
+            <input ref={restoreInput} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void restoreBackup(file); }} />
+          </div>
+        </div>
+        <div className="maintenance-row">
+          <div><strong>数据版本</strong><small>{migration?.pendingProjects ? `${migration.pendingProjects} 个项目待升级` : `${migration?.scannedProjects ?? 0} 个项目已是最新`}</small></div>
+          <div className="maintenance-version-action"><code>v{migration?.currentVersion ?? "-"} → v{migration?.targetVersion ?? 1}</code><button type="button" className="secondary-button" onClick={migrate} disabled={Boolean(busy) || !migration?.pendingProjects}><Wrench size={15} />{busy === "migrate" ? "升级中…" : "升级"}</button></div>
         </div>
       </section>
 
-      <section className="maintenance-block">
-        <div className="maintenance-status-row"><div><h3>数据版本</h3><p>统一旧项目字段并写入当前数据版本，执行前会自动保存本地备份。</p></div><strong>v{migration?.currentVersion ?? "-"} / v{migration?.targetVersion ?? 1}</strong></div>
-        <div className="maintenance-facts"><span>扫描 {migration?.scannedProjects ?? 0} 个项目</span><span>{migration?.pendingProjects ? `${migration.pendingProjects} 个待迁移` : "无需迁移"}</span></div>
-        <button type="button" className="settings-section-action" onClick={migrate} disabled={Boolean(busy) || !migration?.pendingProjects}><Wrench size={16} />{busy === "migrate" ? "迁移中" : "执行迁移"}</button>
-      </section>
-
-      <section className="maintenance-block">
-        <div className="maintenance-status-row"><div><h3>错误诊断</h3><p>记录最近的 API 与生成错误，密钥和授权信息会自动脱敏。</p></div><button type="button" className="maintenance-icon-button" aria-label="刷新诊断日志" title="刷新诊断日志" onClick={() => void load()}><ArrowClockwise size={16} /></button></div>
-        {diagnostics.length ? (
-          <ul className="diagnostic-list">{diagnostics.slice(0, 8).map((entry) => <li key={entry.id}><span>{entry.stage}</span><div><strong>{entry.message}</strong><time>{new Date(entry.timestamp).toLocaleString("zh-CN")}</time></div></li>)}</ul>
-        ) : <p className="maintenance-empty">暂无诊断记录</p>}
-        <button type="button" className="settings-section-action secondary" onClick={clearLogs} disabled={Boolean(busy) || !diagnostics.length}><Trash size={16} />{busy === "logs" ? "清理中" : "清理日志"}</button>
+      <section className="settings-section maintenance-diagnostics">
+        <header><div><h3>诊断</h3><p>{diagnostics.length ? `${diagnostics.length} 条最近错误` : "没有错误记录"}</p></div><button type="button" className="maintenance-icon-button" aria-label="刷新诊断日志" title="刷新" onClick={() => void load()}><ArrowClockwise size={15} /></button></header>
+        {diagnostics.length > 0 && <ul className="diagnostic-list">{diagnostics.slice(0, 6).map((entry) => <li key={entry.id}><span>{entry.stage}</span><div><strong>{entry.message}</strong><time>{new Date(entry.timestamp).toLocaleString("zh-CN")}</time></div></li>)}</ul>}
+        {diagnostics.length > 0 && <button type="button" className="text-button is-danger maintenance-clear" onClick={clearLogs} disabled={Boolean(busy)}><Trash size={14} />{busy === "logs" ? "清理中…" : "清空日志"}</button>}
       </section>
       {message && <p className="settings-section-notice">{message}</p>}
       {error && <p className="settings-section-error">{error}</p>}
