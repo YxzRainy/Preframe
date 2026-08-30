@@ -146,7 +146,7 @@ export function ShootingFeedbackPanel({ slug, shotTasks, onChanged }: ShootingFe
         throw new Error(data.error || "下一版内容生成失败。");
       }
       setRevision(data.revision);
-      setNotice("下一版脚本、分镜、拍摄清单和成片执行稿已生成，原文件未覆盖。");
+      setNotice("下一版拍摄执行稿已生成，口播、镜头、字幕和素材已在同一份文件中同步，原文件未覆盖。");
     } catch (err) {
       setError(err instanceof Error ? err.message : "下一版内容生成失败。");
     } finally { setBusy(""); }

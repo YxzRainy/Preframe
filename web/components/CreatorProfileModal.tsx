@@ -10,12 +10,13 @@ interface CreatorProfile {
 }
 
 interface CreatorProfileModalProps {
-  open: boolean;
-  onClose: () => void;
-  onSaved: () => void;
+  open?: boolean;
+  onClose?: () => void;
+  onSaved?: () => void;
+  embedded?: boolean;
 }
 
-export function CreatorProfileModal({ open, onClose, onSaved }: CreatorProfileModalProps) {
+export function CreatorProfileModal({ open = false, onClose = () => undefined, onSaved, embedded = false }: CreatorProfileModalProps) {
   const [profile, setProfile] = useState<CreatorProfile>({ name: "创作者", avatarUrl: "/api/profile/avatar" });
   const [nameInput, setNameInput] = useState("创作者");
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
@@ -27,7 +28,7 @@ export function CreatorProfileModal({ open, onClose, onSaved }: CreatorProfileMo
   const avatarInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open && !embedded) return;
     async function loadProfile() {
       try {
         const response = await fetch("/api/profile");
@@ -43,7 +44,7 @@ export function CreatorProfileModal({ open, onClose, onSaved }: CreatorProfileMo
       }
     }
     loadProfile();
-  }, [open]);
+  }, [embedded, open]);
 
   useEffect(() => {
     if (!avatarFile) {
@@ -71,8 +72,8 @@ export function CreatorProfileModal({ open, onClose, onSaved }: CreatorProfileMo
       setAvatarFile(null);
       setAvatarFailed(false);
       setAvatarVersion(Date.now());
-      onSaved();
-      onClose();
+      onSaved?.();
+      if (!embedded) onClose();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创作者资料保存失败。");
     } finally {
@@ -113,8 +114,8 @@ export function CreatorProfileModal({ open, onClose, onSaved }: CreatorProfileMo
       setAvatarFile(null);
       setAvatarFailed(true);
       setAvatarVersion(Date.now());
-      onSaved();
-      onClose();
+      onSaved?.();
+      if (!embedded) onClose();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "创作者资料恢复失败。");
     } finally {
@@ -125,28 +126,28 @@ export function CreatorProfileModal({ open, onClose, onSaved }: CreatorProfileMo
   const avatarSrc = avatarPreview || (avatarVersion ? `${profile.avatarUrl}?v=${avatarVersion}` : profile.avatarUrl);
   const showAvatarImage = Boolean(avatarPreview || !avatarFailed);
 
-  return (
-    <Modal
-      open={open}
-      title="创作者资料"
-      description="昵称和头像只保存在本机，不会上传到云端。"
-      onClose={onClose}
-      closeDisabled={saving}
-      footer={<><button type="button" className="secondary-button" onClick={onClose} disabled={saving}>取消</button><button type="button" className="secondary-button" onClick={resetProfile} disabled={saving}>恢复默认</button><button type="submit" form="profile-form" className="primary-button" disabled={saving}>{saving ? "保存中" : "保存"}</button></>}
-    >
-      <form id="profile-form" className="modal-form" onSubmit={saveProfile}>
-        <div className="profile-avatar-editor">
-          <span className="profile-avatar-preview">{showAvatarImage ? <img src={avatarSrc} alt={`${profile.name}的头像预览`} onError={() => setAvatarFailed(true)} /> : <i />}</span>
-          <div className="avatar-upload-copy">
-            <span>头像</span>
-            <input ref={avatarInputRef} className="avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => chooseAvatar(event.target.files?.[0])} />
-            <button className="avatar-upload-control" type="button" onClick={() => avatarInputRef.current?.click()}>更换头像</button>
-            <small>{avatarFile ? avatarFile.name : "支持 PNG / JPG / JPEG / WEBP，最大 10MB，保存在本机 .piance/profile/。"}</small>
-          </div>
+  const form = (
+    <form id="profile-form" className="modal-form" onSubmit={saveProfile}>
+      <div className="profile-avatar-editor">
+        <span className="profile-avatar-preview">{showAvatarImage ? <img src={avatarSrc} alt={`${profile.name}的头像预览`} onError={() => setAvatarFailed(true)} /> : <i />}</span>
+        <div className="avatar-upload-copy">
+          <span>头像</span>
+          <input ref={avatarInputRef} className="avatar-file-input" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => chooseAvatar(event.target.files?.[0])} />
+          <button className="avatar-upload-control" type="button" onClick={() => avatarInputRef.current?.click()}>更换头像</button>
+          <small>{avatarFile ? avatarFile.name : "PNG / JPG / WEBP，最大 10MB。"}</small>
         </div>
-        <label><span>昵称</span><input required value={nameInput} onChange={(event) => setNameInput(event.target.value)} placeholder="创作者" /></label>
-        {error && <p className="settings-modal-error">{error}</p>}
-      </form>
+      </div>
+      <label><span>昵称</span><input required value={nameInput} onChange={(event) => setNameInput(event.target.value)} placeholder="创作者" /></label>
+      {error && <p className="settings-modal-error">{error}</p>}
+      {embedded && <div className="settings-inline-actions"><button type="button" className="secondary-button" onClick={resetProfile} disabled={saving}>恢复默认</button><button type="submit" className="primary-button" disabled={saving}>{saving ? "保存中" : "保存"}</button></div>}
+    </form>
+  );
+
+  if (embedded) return <div className="settings-embedded-form">{form}</div>;
+
+  return (
+    <Modal open={open} title="创作者资料" description="昵称和头像只保存在本机，不会上传到云端。" onClose={onClose} closeDisabled={saving} footer={<><button type="button" className="secondary-button" onClick={onClose} disabled={saving}>取消</button><button type="button" className="secondary-button" onClick={resetProfile} disabled={saving}>恢复默认</button><button type="submit" form="profile-form" className="primary-button" disabled={saving}>{saving ? "保存中" : "保存"}</button></>}>
+      {form}
     </Modal>
   );
 }

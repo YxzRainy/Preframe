@@ -1,11 +1,10 @@
-/** 系统操作服务 — 剪贴板写入、Finder 定位、打开后台
+/** 系统操作服务 — 剪贴板写入、Finder 定位、打开文件
  * 全部使用 spawn 参数数组，禁止 exec / shell 字符串拼接。
  * 不自动输入密码、不绕过登录、不自动点击发布、不输出 Cookie/Token。 */
 
 import { spawn } from "node:child_process";
 import os from "node:os";
 
-import { PLATFORM_PUBLISH_PROFILES, type PublisherPlatform } from "../types/publisher.js";
 
 export interface SystemActionResult {
   ok: boolean;
@@ -138,49 +137,4 @@ export async function openInDefaultPlayer(filePath: string): Promise<SystemActio
     return runSpawn("cmd", ["/c", "start", "", filePath]);
   }
   return runSpawn("xdg-open", [filePath]);
-}
-
-/** 使用系统默认浏览器打开平台官方后台 */
-export async function openCreatorBackend(platform: PublisherPlatform): Promise<SystemActionResult & { url: string }> {
-  const profile = PLATFORM_PUBLISH_PROFILES[platform];
-  const url = profile?.creatorBackendUrl;
-  if (!url) {
-    return {
-      ok: false,
-      url: "",
-      method: "skip",
-      error: profile?.creatorBackendNote || `${profile?.label || platform}暂无已知官方创作者后台 URL。`,
-    };
-  }
-  const platformOs = os.platform();
-  let command: string;
-  let args: string[];
-  if (platformOs === "darwin") {
-    command = "open";
-    args = [url];
-  } else if (platformOs === "win32") {
-    command = "cmd";
-    args = ["/c", "start", "", url];
-  } else {
-    command = "xdg-open";
-    args = [url];
-  }
-  const result = await runSpawn(command, args);
-  return { ...result, url };
-}
-
-/** 聚焦 worker 启动的浏览器窗口（macOS：尝试激活 Chromium/Chrome）。
- * 用于半自动发布「查看浏览器」按钮。失败不阻断。 */
-export async function focusBrowserWindow(): Promise<SystemActionResult> {
-  const platformOs = os.platform();
-  if (platformOs !== "darwin") {
-    return { ok: false, method: "skip", error: "当前系统不支持聚焦浏览器窗口。" };
-  }
-  // patchright 使用 bundled chromium；也可能用系统 Chrome。依次尝试激活。
-  const apps = ["Chromium", "Google Chrome"];
-  for (const app of apps) {
-    const result = await runSpawn("osascript", ["-e", `tell application "${app}" to activate`], 3000);
-    if (result.ok) return { ok: true, method: `osascript:${app}` };
-  }
-  return { ok: false, method: "osascript", error: "未找到可激活的浏览器进程。" };
 }

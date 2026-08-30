@@ -22,12 +22,13 @@ interface PublicModelConfig {
 }
 
 interface ModelConfigModalProps {
-  open: boolean;
-  onClose: () => void;
+  open?: boolean;
+  onClose?: () => void;
   onSaved?: (label: string) => void;
+  embedded?: boolean;
 }
 
-export function ModelConfigModal({ open, onClose, onSaved }: ModelConfigModalProps) {
+export function ModelConfigModal({ open = false, onClose = () => undefined, onSaved, embedded = false }: ModelConfigModalProps) {
   const [serverConfig, setServerConfig] = useState<PublicModelConfig | null>(null);
   const [savedApiKey, setSavedApiKey] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -59,14 +60,14 @@ export function ModelConfigModal({ open, onClose, onSaved }: ModelConfigModalPro
   }
 
   useEffect(() => {
-    if (!open) return;
+    if (!open && !embedded) return;
     setStatus("读取中");
     setMessage("");
     loadConfig().catch((error) => {
       setStatus("读取失败");
       setMessage(error instanceof Error ? error.message : "模型配置读取失败。");
     });
-  }, [open]);
+  }, [embedded, open]);
 
   function notifyUpdated(label: string) {
     window.dispatchEvent(new CustomEvent("piance-model-config-updated", { detail: { modelLabel: label } }));
@@ -131,6 +132,39 @@ export function ModelConfigModal({ open, onClose, onSaved }: ModelConfigModalPro
   const effectiveConfigured = Boolean(savedApiKey || serverConfig?.configured);
   const sourceLabel = savedApiKey ? "当前浏览器" : serverConfig?.configured ? "服务器环境变量" : "未配置";
 
+  const form = (
+    <form id="model-config-form" className="modal-form model-config-form" onSubmit={save}>
+      <section className="model-config-status">
+        <div>
+          <span className={`model-config-state state-${status === "连接成功" || effectiveConfigured ? "success" : status.includes("失败") ? "error" : "muted"}`}>{status}</span>
+          <strong>DeepSeek · deepseek-v4-flash</strong>
+          <p>{message || "API Key 只保存在当前浏览器的 localStorage 中，不会保存到服务器数据库。"}</p>
+        </div>
+        <dl>
+          <div><dt>配置来源</dt><dd>{sourceLabel}</dd></div>
+          <div><dt>个人 API Key</dt><dd>{savedApiKey ? maskLocalApiKey(savedApiKey) : "未配置"}</dd></div>
+        </dl>
+      </section>
+
+      <label>
+        <span>模型</span>
+        <input value="deepseek-v4-flash" readOnly />
+      </label>
+      <label>
+        <span>API 地址</span>
+        <input value="https://api.deepseek.com/v1" readOnly />
+      </label>
+      <label>
+        <span>你的 DeepSeek API Key</span>
+        <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={savedApiKey ? `当前：${maskLocalApiKey(savedApiKey)}` : "sk-..."} type="password" autoComplete="off" />
+        <small>仅保存在当前浏览器。</small>
+      </label>
+      {embedded && <div className="settings-inline-actions"><button type="button" className="secondary-button" onClick={restoreDefault} disabled={busy || testing || !savedApiKey}>清除个人 Key</button><button type="button" className="secondary-button" onClick={testConnection} disabled={busy || testing || (!apiKey.trim() && !savedApiKey && !serverConfig?.configured)}>{testing ? "测试中" : "测试连接"}</button><button type="submit" className="primary-button" disabled={busy || testing || !apiKey.trim()}>{busy ? "保存中" : "保存"}</button></div>}
+    </form>
+  );
+
+  if (embedded) return <div className="settings-embedded-form">{form}</div>;
+
   return (
     <Modal
       open={open}
@@ -147,33 +181,7 @@ export function ModelConfigModal({ open, onClose, onSaved }: ModelConfigModalPro
         </>
       )}
     >
-      <form id="model-config-form" className="modal-form model-config-form" onSubmit={save}>
-        <section className="model-config-status">
-          <div>
-            <span className={`model-config-state state-${status === "连接成功" || effectiveConfigured ? "success" : status.includes("失败") ? "error" : "muted"}`}>{status}</span>
-            <strong>DeepSeek · deepseek-v4-flash</strong>
-            <p>{message || "API Key 只保存在当前浏览器的 localStorage 中，不会保存到服务器数据库。"}</p>
-          </div>
-          <dl>
-            <div><dt>配置来源</dt><dd>{sourceLabel}</dd></div>
-            <div><dt>个人 API Key</dt><dd>{savedApiKey ? maskLocalApiKey(savedApiKey) : "未配置"}</dd></div>
-          </dl>
-        </section>
-
-        <label>
-          <span>模型</span>
-          <input value="deepseek-v4-flash" readOnly />
-        </label>
-        <label>
-          <span>API 地址</span>
-          <input value="https://api.deepseek.com/v1" readOnly />
-        </label>
-        <label>
-          <span>你的 DeepSeek API Key</span>
-          <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={savedApiKey ? `当前：${maskLocalApiKey(savedApiKey)}` : "sk-..."} type="password" autoComplete="off" />
-          <small>保存后仅当前浏览器可读取；调用模型时会通过 HTTPS 发送给本站服务端代理。</small>
-        </label>
-      </form>
+      {form}
     </Modal>
   );
 }

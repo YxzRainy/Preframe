@@ -5,7 +5,7 @@ import { readJsonResponse } from "../../lib/readJsonResponse";
 
 export type ProjectStage =
   | "idea" | "planning" | "ready_to_shoot" | "shooting"
-  | "editing" | "ready_to_publish" | "published" | "archived";
+  | "editing" | "ready_to_publish" | "archived";
 
 export const STAGE_OPTIONS: Array<{ value: ProjectStage; label: string }> = [
   { value: "idea", label: "灵感" },
@@ -14,7 +14,6 @@ export const STAGE_OPTIONS: Array<{ value: ProjectStage; label: string }> = [
   { value: "shooting", label: "拍摄中" },
   { value: "editing", label: "剪辑中" },
   { value: "ready_to_publish", label: "待发布" },
-  { value: "published", label: "已发布" },
   { value: "archived", label: "已归档" },
 ];
 
@@ -33,10 +32,10 @@ interface CockpitMetric {
 interface CockpitData {
   stage: { stage: ProjectStage; stageUpdatedAt: string; nextAction?: string };
   nextAction: string;
+  advice?: { action: string; reason: string; ctaLabel: string; priority: "blocking" | "high" | "normal" };
   documents: CockpitMetric;
   shots: CockpitMetric;
   assets: CockpitMetric & { suggested: number; missing: number; healthIssues: number; reshoot: number };
-  publishing: { label: string; detail: string; tone: "ready" | "warning" | "muted" };
 }
 
 export function StagePanel({ slug }: StagePanelProps) {
@@ -108,7 +107,7 @@ export function StagePanel({ slug }: StagePanelProps) {
               autoFocus
             />
           ) : (
-            <p>{overview?.nextAction || nextAction || "正在整理下一步行动"}</p>
+            <><p>{overview?.nextAction || nextAction || "正在整理下一步行动"}</p>{overview?.advice?.reason && <small className="cockpit-next-reason">{overview.advice.reason}</small>}</>
           )}
           <button type="button" className="project-text-button" onClick={() => setEditingNextAction((current) => !current)}>
             {editingNextAction ? "收起编辑" : "修改"}
@@ -120,7 +119,6 @@ export function StagePanel({ slug }: StagePanelProps) {
           <Metric label="策划文档" value={`${overview.documents.completed ?? 0}/${overview.documents.total ?? 0}`} metric={overview.documents} />
           <Metric label="镜头任务" value={`${overview.shots.completed ?? 0}/${overview.shots.total ?? 0}`} metric={overview.shots} />
           <Metric label="素材匹配" value={`${overview.assets.ready ?? 0}/${overview.assets.total ?? 0}`} metric={overview.assets} />
-          <div className={`cockpit-metric tone-${overview.publishing.tone}`}><span>发布准备</span><strong>{overview.publishing.label}</strong><small>{overview.publishing.detail}</small></div>
         </div>
       )}
       <div className="stage-panel-body stage-panel-controls">

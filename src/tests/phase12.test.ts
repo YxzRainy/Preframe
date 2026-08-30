@@ -39,25 +39,26 @@ test("灵感转换后写入项目 slug", async () => {
   assert.equal(saved?.convertedProjectSlug, "test-project");
 });
 
-test("09/10 只使用统一的 requiredSections 定义", () => {
-  const doc09 = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === "09");
-  const doc10 = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === "10");
-  const sections09 = doc09?.requiredSections as readonly string[] | undefined;
-  const sections10 = doc10?.requiredSections as readonly string[] | undefined;
-  assert.ok(sections09?.includes("每5-10秒画面安排"));
-  assert.ok(!sections09?.includes("每 5-10 秒画面安排"));
-  assert.ok(sections10?.includes("低风险CTA"));
+test("新项目只保留三份核心文档并使用统一结构", () => {
+  assert.deepEqual(PROJECT_DOCUMENT_DEFINITIONS.map((item) => item.filename), [
+    "01_创作简报.md",
+    "02_拍摄执行稿.md",
+    "03_发布与复盘.md",
+  ]);
+  const execution = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === "02")!;
+  assert.ok(execution.requiredSections.includes("镜头执行表"));
+  assert.ok(execution.requiredSections.includes("锁稿检查"));
 });
 
 test("文档版本可归档、比较并回滚", async () => {
   const slug = "version-project";
-  const fileName = "01_项目概览.md";
+  const fileName = "01_创作简报.md";
   const projectDir = path.join(outputDir, slug);
   await mkdir(projectDir, { recursive: true });
   await writeFile(path.join(projectDir, "project.json"), "{}\n", "utf8");
-  await writeFile(path.join(projectDir, fileName), "# 项目概览\n\n旧内容\n", "utf8");
-  const archived = await archiveDocumentVersion(slug, fileName, "# 项目概览\n\n旧内容\n", "regenerate");
-  await writeFile(path.join(projectDir, fileName), "# 项目概览\n\n新内容\n", "utf8");
+  await writeFile(path.join(projectDir, fileName), "# 创作简报\n\n旧内容\n", "utf8");
+  const archived = await archiveDocumentVersion(slug, fileName, "# 创作简报\n\n旧内容\n", "regenerate");
+  await writeFile(path.join(projectDir, fileName), "# 创作简报\n\n新内容\n", "utf8");
 
   const versions = await listDocumentVersions(slug, fileName);
   assert.equal(versions[0]?.id, "current");
@@ -67,6 +68,6 @@ test("文档版本可归档、比较并回滚", async () => {
   assert.match(diff, /\+ 新内容/u);
 
   await rollbackDocumentVersion(slug, fileName, archived.id);
-  assert.equal(await readFile(path.join(projectDir, fileName), "utf8"), "# 项目概览\n\n旧内容\n");
+  assert.equal(await readFile(path.join(projectDir, fileName), "utf8"), "# 创作简报\n\n旧内容\n");
   assert.ok((await listDocumentVersions(slug, fileName)).some((version) => version.reason === "rollback"));
 });

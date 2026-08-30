@@ -1,6 +1,6 @@
 /** 素材自动扫描 — 多目录监听、文件稳定检测、轻量指纹去重、ffprobe 元数据
  *
- * 复用 finalVideoWatcher 已验证的思路：
+ * 采用轻量扫描与去重策略：
  * - mtime 不足 10s 的文件跳过（仍在导入/导出）
  * - 连续两次扫描 size+mtime 一致才视为稳定
  * - 首尾 64KB hash + size + 规范化文件名去重，不读完整大文件
@@ -28,7 +28,7 @@ import type {
   MediaScannedDirectory,
   ScanCapability,
 } from "../types/mediaAsset.js";
-import { normalizeVideoName } from "./finalVideoWatcher.js";
+import { normalizeMediaFileName } from "./mediaFileName.js";
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".m4v", ".webm"]);
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".webp"]);
@@ -255,7 +255,7 @@ export async function scanMediaAssets(): Promise<MediaScanResult> {
           const stableEntry = stabilityMap.get(fullPath);
           if (stableEntry) stableEntry.stable = true;
 
-          const normalizedName = normalizeVideoName(name);
+          const normalizedName = normalizeMediaFileName(name);
           const existing = assetByPath.get(fullPath);
 
           // 已有记录：保留项目匹配状态，仅刷新文件信息

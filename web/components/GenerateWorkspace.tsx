@@ -40,16 +40,16 @@ interface PublicModelStatus {
   canConfigure: boolean;
 }
 
-const initialForm: NewTaskFormData = { projectName: "", topic: "", platform: "小红书", contentSubject: "", contentDomain: "", style: "专业但通俗", targetUser: "", extra: "" };
+const initialForm: NewTaskFormData = { projectName: "", topic: "", platform: "自动判断", contentSubject: "", contentDomain: "", style: "自动匹配", targetUser: "", extra: "" };
 const CREATE_PROJECT_DRAFT_KEY = "piance:create-project-draft:v1";
 const MODEL_CONFIGURATION_ERROR_CODES = new Set(["DEFAULT_MODEL_UNAVAILABLE", "CUSTOM_MODEL_UNAVAILABLE"]);
 const TOTAL_DOCUMENTS = PROJECT_DOCUMENT_DEFINITIONS.length;
 const GENERATION_STAGE_LABELS: Record<GenerationUiStatus, string> = {
   idle: "等待创建项目",
   creating: "创建项目目录",
-  generatingCore: "生成前期策划文档",
-  generatingExecution: "生成成片执行稿",
-  generatingPublishCopy: "生成发布承接话术",
+  generatingCore: "生成创作简报",
+  generatingExecution: "生成拍摄执行稿",
+  generatingPublishCopy: "生成发布与复盘",
   writing: "写入本地文件",
   paused: "生成已暂停",
   partial: "部分文档已生成",
@@ -340,7 +340,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
     cancelledJobIdRef.current = "";
     const startingProgress = initialGenerationProgress();
     setGenerationProgress(startingProgress);
-    setGenerationJob({ jobId, status: "creating", currentDocument: "01_项目概览.md", progress: 0, generationProgress: startingProgress });
+    setGenerationJob({ jobId, status: "creating", currentDocument: "01_创作简报.md", progress: 0, generationProgress: startingProgress });
     setDrawerOpen(false);
     const pendingName = form.projectName || form.topic || "内容项目";
     window.dispatchEvent(new CustomEvent("piance-current-project", { detail: { title: pendingName, status: "创建项目目录", tone: "working" } }));
@@ -376,7 +376,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
       setDraftSaved(false);
       window.dispatchEvent(new CustomEvent("piance-current-project", { detail: {
         title: displayName,
-        status: status === "complete" ? `策划包已生成 · ${data.files.length}/${TOTAL_DOCUMENTS} 已完成` : `部分生成 · ${data.files.length}/${TOTAL_DOCUMENTS} 可用`,
+        status: status === "complete" ? `核心工作稿已生成 · ${data.files.length}/${TOTAL_DOCUMENTS} 已完成` : `部分生成 · ${data.files.length}/${TOTAL_DOCUMENTS} 可用`,
         tone: status === "complete" ? "ready" : "warning",
         fileCount: data.files.length,
       } }));

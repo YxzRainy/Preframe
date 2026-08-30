@@ -14,7 +14,7 @@ interface HomeAgentConsoleProps {
   projectStatus?: "complete" | "partial" | "failed";
 }
 
-const TOTAL_DOCUMENTS = 10;
+const TOTAL_DOCUMENTS = 3;
 
 export function HomeAgentConsole({ projectSlug, projectName, loading, model, fileCount, generationStage, projectStatus = "complete" }: HomeAgentConsoleProps) {
   const [open, setOpen] = useState(false);

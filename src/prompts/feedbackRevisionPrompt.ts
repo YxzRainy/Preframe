@@ -1,11 +1,6 @@
 import { HUMAN_WRITING_RULES } from "./humanWritingRules.js";
 
-export const FEEDBACK_REVISION_FILES = [
-  "03_口播脚本.md",
-  "04_分镜与剪辑节奏.md",
-  "05_拍摄清单.md",
-  "09_成片执行稿.md",
-] as const;
+export const FEEDBACK_REVISION_FILES = ["02_拍摄执行稿.md"] as const;
 
 export function buildFeedbackRevisionPrompt(
   project: { topic: string; platform: string; contentSubject: string; contentDomain: string; style: string; targetAudience: string },
@@ -14,7 +9,7 @@ export function buildFeedbackRevisionPrompt(
   strategy = "",
 ): string {
   const source = documents.map((doc) => `===== ${doc.name} =====\n${doc.content.trim()}`).join("\n\n");
-  return `你是短视频现场编导。请根据原策划文件和真实拍摄复盘，生成一套“下一版可直接执行”的内容文件。
+  return `你是短视频现场编导。请根据真实拍摄复盘，直接修订唯一真源“02_拍摄执行稿.md”。
 
 项目：${project.topic}
 平台：${project.platform}
@@ -29,25 +24,24 @@ ${feedback}
 项目策略（历次复盘沉淀）：
 ${strategy || "暂无历史策略"}
 
-原策划文件：
+当前创作简报与拍摄执行稿：
 ${source}
 
 输出要求：
-- 只输出一个 JSON 对象，键名必须是：${FEEDBACK_REVISION_FILES.join("、")}。
-- 四个文件必须互相一致：脚本里的每个段落都要能在分镜和成片执行稿里找到对应；拍摄清单必须覆盖新增、删减和补拍要求。
-- 保留仍然有效的内容，只改动被现场证据支持的部分；不要为了“更完整”扩写无关内容。
-- 删除拍摄中被证明不可执行的镜头或表达；新增镜头必须说明拍摄动作、时长和替代方案。
-- 任何没有证据的效果、数据、用户反馈都不要补写。
+- 只输出一个 JSON 对象，唯一键名是“02_拍摄执行稿.md”。
+- 直接把复盘中已被证实的问题修进最终逐字稿、镜头执行表、素材和风险，不再生成四份互相同步的修订文档。
+- 镜头执行表仍使用“时间｜最终口播｜画面/动作｜字幕重点｜B-roll/素材｜拍摄状态”，新增或需补拍的状态写“未拍”。
+- 保留仍然有效的内容，只改动被现场证据支持的部分；删除被证明不可执行的镜头或表达。
+- 不得留下“用户后续再压缩/再修改”的任务；修订后必须可直接进入下一轮拍摄。
 ${HUMAN_WRITING_RULES}
 
-JSON 示例结构：{"03_口播脚本.md":"# 口播脚本\\n...","04_分镜与剪辑节奏.md":"# 分镜与剪辑节奏\\n...","05_拍摄清单.md":"# 拍摄清单\\n...","09_成片执行稿.md":"# 成片执行稿\\n..."}`;
+JSON 示例：{"02_拍摄执行稿.md":"# 拍摄执行稿\\n..."}`;
 }
 
 export function buildFeedbackRevisionRepairPrompt(raw: string, errors: string[]): string {
-  return `上一版“拍摄复盘修订包”不合格：${errors.join("；")}
+  return `上一版拍摄执行稿修订不合格：${errors.join("；")}
 
-请修复并只输出 JSON 对象，必须包含以下四个键：${FEEDBACK_REVISION_FILES.join("、")}。
-每个值都是完整 Markdown，保留原有有效内容，不得出现占位语、泛泛而谈或无法拍摄的安排。
+请修复并只输出 JSON 对象，唯一键名是“02_拍摄执行稿.md”。值为完整 Markdown，不得出现占位语、泛泛而谈或无法拍摄的安排。
 ${HUMAN_WRITING_RULES}
 
 待修复输出：

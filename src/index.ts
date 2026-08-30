@@ -14,7 +14,7 @@ program
   .description("片策｜短视频前期自动化工作台")
   .version("0.1.0");
 
-program.command("generate").description("创建短视频内容项目并生成前期策划包").action(runGenerate);
+program.command("generate").description("创建短视频内容项目并生成三份核心工作稿").action(runGenerate);
 program.command("refine").description("修改已有项目内容").action(runRefine);
 program.command("scan").description("扫描并整理素材文件").action(runScan);
 

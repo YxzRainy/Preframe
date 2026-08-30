@@ -7,7 +7,6 @@ export type ProjectStage =
   | "shooting"
   | "editing"
   | "ready_to_publish"
-  | "published"
   | "archived";
 
 export const PROJECT_STAGE_LABELS: Record<ProjectStage, string> = {
@@ -17,7 +16,6 @@ export const PROJECT_STAGE_LABELS: Record<ProjectStage, string> = {
   shooting: "拍摄中",
   editing: "剪辑中",
   ready_to_publish: "待发布",
-  published: "已发布",
   archived: "已归档",
 };
 
@@ -28,7 +26,6 @@ export const PROJECT_STAGE_ORDER: ProjectStage[] = [
   "shooting",
   "editing",
   "ready_to_publish",
-  "published",
   "archived",
 ];
 
@@ -39,7 +36,6 @@ export const PROJECT_STAGE_COLORS: Record<ProjectStage, string> = {
   shooting: "var(--warning)",
   editing: "#c084fc",
   ready_to_publish: "#38bdf8",
-  published: "var(--success)",
   archived: "var(--text-muted)",
 };
 
@@ -51,11 +47,16 @@ export interface DashboardProject {
   stageLabel: string;
   stageUpdatedAt: string;
   nextAction?: string;
+  nextActionReason?: string;
+  nextActionLabel?: string;
+  nextActionHref?: string;
+  nextActionPriority?: "blocking" | "high" | "normal";
   documentCompleted: number;
   documentTotal: number;
   shotCompleted: number;
   shotTotal: number;
   updatedAt: string;
+  resumeAvailable?: boolean;
 }
 
 export interface DashboardData {

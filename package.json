@@ -17,7 +17,7 @@
     "scan": "tsx src/index.ts scan",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "node --import tsx/esm src/tests/qualityStatus.test.ts && node --import tsx/esm src/tests/phase12.test.ts && node --import tsx/esm src/tests/phase34.test.ts && node --import tsx/esm src/tests/phase5.test.ts && node --import tsx/esm src/tests/feedback.test.ts && node --import tsx/esm src/tests/proxyManager.test.ts && node --import tsx/esm src/tests/mediaRelinker.test.ts && node --import tsx/esm src/tests/security.test.ts"
+    "test": "node --import tsx/esm src/tests/qualityStatus.test.ts && node --import tsx/esm src/tests/phase12.test.ts && node --import tsx/esm src/tests/phase34.test.ts && node --import tsx/esm src/tests/phase5.test.ts && node --import tsx/esm src/tests/feedback.test.ts && node --import tsx/esm src/tests/shotTaskBuilder.test.ts && node --import tsx/esm src/tests/shotTaskApi.test.ts && node --import tsx/esm src/tests/proxyManager.test.ts && node --import tsx/esm src/tests/mediaRelinker.test.ts && node --import tsx/esm src/tests/security.test.ts && node --import tsx/esm src/tests/projectAdvisor.test.ts && node --import tsx/esm src/tests/creatorLearning.test.ts && node --import tsx/esm src/tests/contentAssets.test.ts && node --import tsx/esm src/tests/coverPrompt.test.ts"
   },
   "engines": {
     "node": ">=18"

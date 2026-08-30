@@ -10,7 +10,7 @@ export interface ConfigBackupV1 {
   files: PortableArchiveFile[];
 }
 
-const EXCLUDED_PREFIXES = ["trash/", "backups/", "browser-profiles/", "publisher-browser/"];
+const EXCLUDED_PREFIXES = ["trash/", "backups/", "browser-profiles/"];
 
 function dataDir(): string {
   return process.env.PIANCE_DATA_DIR?.trim() ? path.resolve(process.env.PIANCE_DATA_DIR) : path.resolve(process.cwd(), ".piance");

@@ -5,7 +5,7 @@ import { resolveProjectDirectory } from "../../../../../../src/services/projectM
 import { readProject } from "../../../../../../src/services/projectReader";
 import { buildShotTasks, mergeShotTaskState } from "../../../../../../src/services/shotTaskBuilder";
 import { syncProjectDerivedState } from "../../../../../../src/services/projectLifecycle";
-import type { ShotTask, ShotTaskStatus } from "../../../../../../src/types/shotTask";
+import type { ShotTake, ShotTask, ShotTaskStatus } from "../../../../../../src/types/shotTask";
 import { apiError } from "../../../_utils";
 
 export const runtime = "nodejs";
@@ -90,6 +90,9 @@ interface ShotPatchPayload {
   missingAssets?: string[];
   existingAssets?: string[];
   notes?: string;
+  takes?: ShotTake[];
+  bestTakeId?: string;
+  needsReshoot?: boolean;
 }
 
 function validatePatch(body: unknown): ShotPatchPayload[] {
@@ -127,6 +130,23 @@ function validatePatch(body: unknown): ShotPatchPayload[] {
       if (typeof record.notes !== "string") throw new Error("notes 必须为字符串。");
       patch.notes = record.notes;
     }
+    if (record.takes !== undefined) {
+      if (!Array.isArray(record.takes) || !record.takes.every((take) => take && typeof take === "object"
+        && typeof (take as Record<string, unknown>).id === "string"
+        && typeof (take as Record<string, unknown>).createdAt === "string"
+        && ["good", "usable", "reshoot"].includes(String((take as Record<string, unknown>).outcome)))) {
+        throw new Error("takes 格式无效。");
+      }
+      patch.takes = record.takes as ShotTake[];
+    }
+    if (record.bestTakeId !== undefined) {
+      if (typeof record.bestTakeId !== "string") throw new Error("bestTakeId 必须为字符串。");
+      patch.bestTakeId = record.bestTakeId;
+    }
+    if (record.needsReshoot !== undefined) {
+      if (typeof record.needsReshoot !== "boolean") throw new Error("needsReshoot 必须为布尔值。");
+      patch.needsReshoot = record.needsReshoot;
+    }
 
     patches.push(patch);
   }
@@ -159,11 +179,27 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ sl
       if (patch.missingAssets !== undefined) task.missingAssets = patch.missingAssets;
       if (patch.existingAssets !== undefined) task.existingAssets = patch.existingAssets;
       if (patch.notes !== undefined) task.notes = patch.notes;
+      if (patch.takes !== undefined) task.takes = patch.takes;
+      if (patch.bestTakeId !== undefined) task.bestTakeId = patch.bestTakeId || undefined;
+      if (patch.needsReshoot !== undefined) task.needsReshoot = patch.needsReshoot;
 
       updated.push(patch.id);
     }
 
     metadata.shotTasks = tasks;
+    if (metadata.executionPlan && typeof metadata.executionPlan === "object" && !Array.isArray(metadata.executionPlan)) {
+      const plan = metadata.executionPlan as { segments?: unknown };
+      if (Array.isArray(plan.segments)) {
+        plan.segments = plan.segments.map((segment) => {
+          if (!segment || typeof segment !== "object" || Array.isArray(segment)) return segment;
+          const record = segment as Record<string, unknown>;
+          const order = typeof record.order === "number" ? record.order : -1;
+          const task = tasks.find((item) => item.order === order);
+          return task ? { ...record, shootingStatus: task.status } : record;
+        });
+        metadata.executionPlan = { ...(metadata.executionPlan as Record<string, unknown>), segments: plan.segments, derivedAt: new Date().toISOString() };
+      }
+    }
     await writeProjectJson(projectDir, metadata);
 
     return NextResponse.json({ ok: true, success: true, updated, shotTasks: tasks });

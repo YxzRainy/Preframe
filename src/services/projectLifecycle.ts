@@ -7,12 +7,12 @@ import { remapShotLinks } from "./shotAssetLinkStore.js";
 import { writeJsonAtomicPath } from "./atomicJson.js";
 import { defaultNextAction, inferStage, type ProjectStage } from "./projectStage.js";
 import type { ShotTask } from "../types/shotTask.js";
+import { executionPlanFromMarkdown, type ExecutionShootingStatus } from "../utils/executionPlan.js";
 
 const MANUAL_LATER_STAGES = new Set<ProjectStage>([
   "shooting",
   "editing",
   "ready_to_publish",
-  "published",
   "archived",
 ]);
 
@@ -38,7 +38,17 @@ export async function syncProjectDerivedState(slug: string): Promise<{
   const previous = Array.isArray(metadata.shotTasks) ? metadata.shotTasks as ShotTask[] : [];
   const merged = mergeShotTaskStateWithMap(previous, buildShotTasks(project.files));
   const shotTasks = merged.tasks;
-  const derivedMetadata = { ...metadata, shotTasks };
+  const executionDocument = project.files.find((file) => file.name === "02_拍摄执行稿.md");
+  const executionPlan = executionDocument
+    ? executionPlanFromMarkdown(executionDocument.content, metadata.executionPlan)
+    : undefined;
+  if (executionPlan) {
+    executionPlan.segments = executionPlan.segments.map((segment) => ({
+      ...segment,
+      shootingStatus: (shotTasks.find((task) => task.order === segment.order)?.status || segment.shootingStatus) as ExecutionShootingStatus,
+    }));
+  }
+  const derivedMetadata = { ...metadata, shotTasks, ...(executionPlan ? { executionPlan } : {}) };
   const inferred = inferStage(derivedMetadata);
   const current = typeof metadata.stage === "string" ? metadata.stage as ProjectStage : undefined;
   const stage = current && MANUAL_LATER_STAGES.has(current) ? current : inferred;
@@ -48,6 +58,7 @@ export async function syncProjectDerivedState(slug: string): Promise<{
   await writeJsonAtomicPath(path.join(projectDir, "project.json"), {
     ...metadata,
     shotTasks,
+    ...(executionPlan ? { executionPlan } : {}),
     stage,
     stageUpdatedAt: stageChanged ? updatedAt : metadata.stageUpdatedAt || updatedAt,
     nextAction: stageChanged || typeof metadata.nextAction !== "string"

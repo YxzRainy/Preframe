@@ -1,5 +1,8 @@
 # Preframe / 片策 — 完整产品与架构审计报告
 
+> 历史说明：本文记录当时的产品状态。发布中心及其账号、任务、会话、自动上传代码已于 2026-08-29 永久移除；当前实现以 `PROJECT_CONTEXT.md` 和 `docs/PROJECT_BLUEPRINT.md` 为准。
+
+
 > **审计日期**：2026-08-04
 > **审计范围**：`/Users/YxzRainy/Documents/Vibecoding/Preframe` 全量代码（前端页面、组件、API 路由、服务层、Prompt/模型调用、数据模型、存储、CLI、配置）
 > **审计方式**：只读分析，未修改任何业务代码、样式或配置

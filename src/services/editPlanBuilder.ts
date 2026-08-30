@@ -84,6 +84,9 @@ export interface EditPlan {
 export interface EditPlanResult {
   jsonPath: string;
   markdownPath: string;
+  csvPath: string;
+  srtPath: string;
+  missingReportPath: string;
   plan: EditPlan;
 }
 
@@ -167,11 +170,61 @@ export async function buildEditPlan(slug: string): Promise<EditPlanResult> {
   await mkdir(editingDir, { recursive: true });
   const jsonPath = path.join(editingDir, "EDIT_PLAN.json");
   const markdownPath = path.join(editingDir, "剪辑准备.md");
+  const csvPath = path.join(editingDir, "剪辑时间线.csv");
+  const srtPath = path.join(editingDir, "口播字幕.srt");
+  const missingReportPath = path.join(editingDir, "缺失镜头报告.md");
 
   await writeFile(jsonPath, `${JSON.stringify(plan, null, 2)}\n`, "utf8");
   await writeFile(markdownPath, renderMarkdown(plan), "utf8");
+  await writeFile(csvPath, renderCsv(plan), "utf8");
+  await writeFile(srtPath, renderSrt(plan), "utf8");
+  await writeFile(missingReportPath, renderMissingReport(plan), "utf8");
 
-  return { jsonPath, markdownPath, plan };
+  return { jsonPath, markdownPath, csvPath, srtPath, missingReportPath, plan };
+}
+
+function csvCell(value: string | number | undefined): string {
+  const text = value === undefined ? "" : String(value);
+  return /[",\n]/u.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function renderCsv(plan: EditPlan): string {
+  const header = ["镜头", "景别", "时长秒", "口播", "画面说明", "主素材路径", "主素材文件", "状态", "剪辑节奏"];
+  const rows = plan.shots.map((shot) => [
+    String(shot.order), shot.shotType, shot.durationSeconds, shot.narration, shot.visualDescription,
+    shot.primaryAssetPath, shot.primaryAssetName, shot.missing ? (shot.hasCandidate ? "待确认" : "缺失") : "已就绪", shot.rhythmNote,
+  ].map(csvCell).join(","));
+  return `\ufeff${header.map(csvCell).join(",")}\n${rows.join("\n")}\n`;
+}
+
+function srtTimestamp(seconds: number): string {
+  const ms = Math.max(0, Math.round(seconds * 1000));
+  const hour = Math.floor(ms / 3_600_000);
+  const minute = Math.floor((ms % 3_600_000) / 60_000);
+  const second = Math.floor((ms % 60_000) / 1000);
+  const milli = ms % 1000;
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")},${String(milli).padStart(3, "0")}`;
+}
+
+function renderSrt(plan: EditPlan): string {
+  let cursor = 0;
+  const blocks: string[] = [];
+  for (const shot of plan.shots) {
+    const duration = Math.max(1, shot.durationSeconds || 3);
+    const narration = shot.narration.replace(/\s+/g, " ").trim();
+    if (narration) blocks.push(`${blocks.length + 1}\n${srtTimestamp(cursor)} --> ${srtTimestamp(cursor + duration)}\n${narration}`);
+    cursor += duration;
+  }
+  return `${blocks.join("\n\n")}\n`;
+}
+
+function renderMissingReport(plan: EditPlan): string {
+  const missing = plan.shots.filter((shot) => shot.missing);
+  const lines = [`# 缺失镜头报告 — ${plan.projectName}`, "", `生成于：${plan.generatedAt}`, ""];
+  if (!missing.length) return `${lines.concat(["所有镜头均已有确认素材。", ""]).join("\n")}`;
+  lines.push(`共 ${missing.length} 个镜头尚不能直接进入剪辑：`, "");
+  for (const shot of missing) lines.push(`- 镜头 ${String(shot.order).padStart(2, "0")} · ${shot.shotType || "镜头"} · ${shot.hasCandidate ? "有候选素材待确认" : "无匹配素材"}${shot.visualDescription ? `\n  - 画面：${shot.visualDescription}` : ""}`);
+  return `${lines.join("\n")}\n`;
 }
 
 function renderMarkdown(plan: EditPlan): string {

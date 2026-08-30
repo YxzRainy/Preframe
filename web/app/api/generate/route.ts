@@ -59,8 +59,10 @@ function required(value: unknown, label: string): string {
   return value.trim();
 }
 
-function optional(value: unknown, fallback: string): string {
-  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+function preference(value: unknown, automaticValue: string): string {
+  if (typeof value !== "string" || !value.trim()) return automaticValue;
+  const normalized = value.trim();
+  return /^(?:自动|自动判断|自动匹配)$/u.test(normalized) ? automaticValue : normalized;
 }
 
 function jobIdFrom(value: unknown): string {
@@ -272,11 +274,11 @@ export async function POST(request: Request) {
     const input: GenerateInput = {
       projectName,
       topic,
-      platform: optional(body.platform, "小红书"),
-      contentSubject: profile.contentSubject || "内容创作者",
-      contentDomain: profile.contentDomain || "未指定",
-      style: optional(body.style, "专业但通俗"),
-      targetAudience: optional(body.targetUser, "对该选题感兴趣的人"),
+      platform: preference(body.platform, "请结合选题与账号记忆自动选择最合适的发布平台"),
+      contentSubject: profile.contentSubject || "请结合选题与账号记忆自动推断内容主体",
+      contentDomain: profile.contentDomain || "请结合选题与账号记忆自动推断内容领域",
+      style: preference(body.style, "请结合选题与账号记忆自动匹配自然、具体的表达方式"),
+      targetAudience: preference(body.targetUser, "请结合选题与账号记忆自动推断最相关的目标用户"),
       extraRequirements: typeof body.extra === "string" ? body.extra.trim() : "",
     };
     const activeJob = job;
@@ -310,13 +312,13 @@ export async function POST(request: Request) {
     finishJob(job);
     updateJob(job, {
       status: result.status === "complete" ? "completed" : result.status,
-      currentDocument: result.status === "complete" ? "10 份文档" : "生成已结束",
-      progress: result.files.length * 10,
+      currentDocument: result.status === "complete" ? "3 份核心工作稿" : "生成已结束",
+      progress: Math.round((result.files.length / PROJECT_DOCUMENT_DEFINITIONS.length) * 100),
       message: result.status === "complete"
         ? ""
         : result.deadlineReached
-          ? `任务达到 06:00 截止时间，已保存 ${result.files.length}/10 份通过校验的文档。`
-          : `${result.files.length}/10 份文档可用，可在项目中继续生成失败项。`,
+          ? `任务达到 06:00 截止时间，已保存 ${result.files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份通过校验的核心工作稿。`
+          : `${result.files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份核心工作稿可用，可在项目中继续生成失败项。`,
     });
     return NextResponse.json({ ok: true, success: true, job: publicJob(job), ...result });
   } catch (error) {

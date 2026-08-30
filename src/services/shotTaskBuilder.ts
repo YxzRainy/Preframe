@@ -1,14 +1,11 @@
 /**
- * shotTaskBuilder — 从现有 03/04/05/07/09 文档解析出结构化镜头任务。
- *
- * 设计原则：
- * - 不依赖新的模型请求，纯文本解析
- * - 解析失败时返回空数组，不影响原有 10 文档流程
- * - 以 04_分镜与剪辑节奏 为主干，其他文档补充信息
+ * shotTaskBuilder — 从“02_拍摄执行稿”的镜头执行表解析结构化镜头任务。
+ * 历史项目继续兼容 03/04/05/07/09 多文档结构。
  */
 
 import type { ShotTask, ShotTaskStatus } from "../types/shotTask.js";
 import type { ContentFile } from "../services/contentWorkflow.js";
+import { parseExecutionSegments } from "../utils/executionPlan.js";
 
 // ---------------------------------------------------------------------------
 // 工具函数
@@ -19,8 +16,8 @@ function findFile(files: ContentFile[], prefix: string): string | undefined {
 }
 
 function parseDuration(text: string): number | undefined {
-  // "0-5s" → 5, "5-10s" → 5, "00:05-00:12" → 7, "5s" → 5
-  const rangeSeconds = text.match(/(\d+)-(\d+)\s*s/i);
+  // "0-5s" / "0-5秒" → 5, "00:05-00:12" → 7, "5s" / "5秒" → 5
+  const rangeSeconds = text.match(/(\d+)\s*[-–—~至]\s*(\d+)\s*(?:s|秒)/i);
   if (rangeSeconds) return Number(rangeSeconds[2]) - Number(rangeSeconds[1]);
   const timecodeRange = text.match(/(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/);
   if (timecodeRange) {
@@ -28,7 +25,7 @@ function parseDuration(text: string): number | undefined {
     const end = Number(timecodeRange[3]) * 60 + Number(timecodeRange[4]);
     return end - start;
   }
-  const plain = text.match(/(\d+)\s*s/i);
+  const plain = text.match(/(\d+)\s*(?:s|秒)/i);
   if (plain) return Number(plain[1]);
   return undefined;
 }
@@ -133,7 +130,7 @@ function parseVisualPrompts(md: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// 09 成片执行稿：提取逐镜头时间安排
+// 历史 09 成片执行稿：提取逐镜头时间安排
 // ---------------------------------------------------------------------------
 
 interface ExecutionRow {
@@ -197,8 +194,7 @@ function parseNarrationSegments(md: string): string[] {
 
 /**
  * 从项目的已有文档构建镜头任务列表。
- * 优先以 04_分镜与剪辑节奏 表格为主干，补充 05 拍摄清单、07 视觉提示词、
- * 09 成片执行稿和 03 口播脚本的信息。
+ * 新项目优先解析 02_拍摄执行稿；历史项目再以 04/05/07/09/03 文档拼接。
  *
  * 解析失败时返回空数组，不抛异常。
  */
@@ -247,6 +243,9 @@ function carryExecutionState(task: ShotTask, old: ShotTask): ShotTask {
     existingAssets: Array.isArray(old.existingAssets) ? [...old.existingAssets] : [],
     missingAssets: Array.isArray(old.missingAssets) ? [...old.missingAssets] : [...task.missingAssets],
     notes: old.notes,
+    takes: Array.isArray(old.takes) ? old.takes.map((take) => ({ ...take })) : undefined,
+    bestTakeId: old.bestTakeId,
+    needsReshoot: old.needsReshoot,
   };
 }
 
@@ -315,7 +314,31 @@ export function mergeShotTaskStateWithMap(previous: ShotTask[], rebuilt: ShotTas
   };
 }
 
+function buildUnifiedShotTasks(md: string): ShotTask[] {
+  return parseExecutionSegments(md).map((segment, index) => {
+    const requiredAssets = extractAssets(segment.shot, segment.broll, "");
+    return {
+      id: makeId(index + 1),
+      order: index + 1,
+      narration: cleanText(segment.spokenText),
+      shotType: inferShotType(segment.shot),
+      durationSeconds: segment.durationSeconds,
+      visualDescription: cleanText([segment.shot, segment.subtitle ? `字幕：${segment.subtitle}` : "", segment.broll ? `B-roll：${segment.broll}` : ""].filter(Boolean).join("\n")),
+      requiredAssets,
+      existingAssets: [],
+      missingAssets: [...requiredAssets],
+      status: "todo" as ShotTaskStatus,
+    };
+  });
+}
+
 function buildShotTasksUnsafe(files: ContentFile[]): ShotTask[] {
+  const unified = files.find((file) => file.name === "02_拍摄执行稿.md")?.content;
+  if (unified) {
+    const tasks = buildUnifiedShotTasks(unified);
+    if (tasks.length) return tasks;
+  }
+
   const doc04 = findFile(files, "04_");
   if (!doc04) return [];
 
@@ -339,7 +362,7 @@ function buildShotTasksUnsafe(files: ContentFile[]): ShotTask[] {
     const row = storyboardRows[i];
     const executionRow = executionRows[i];
 
-    // 口播内容：优先从 09 成片执行稿，其次 04 字幕列，最后 03 口播脚本
+    // 历史项目口播内容：优先从 09 成片执行稿，其次 04 字幕列，最后 03 口播脚本
     const narration = executionRow?.narration
       || row.subtitles
       || narrationSegments[i]
@@ -402,8 +425,18 @@ function inferShotType(visual: string): string {
 function extractAssets(visual: string, bRoll: string, alternative: string): string[] {
   const assets: string[] = [];
   const combined = `${visual} ${bRoll} ${alternative}`;
+  const seen = new Set<string>();
 
-  // 从常见关键词中提取素材需求
+  // 02 的 B-roll/素材列是明确需求，优先原样保留，避免只识别少量关键词。
+  for (const value of [bRoll, alternative]) {
+    for (const item of value.split(/[、，,；;\/]/u).map((part) => cleanText(part)).filter(Boolean)) {
+      if (/^(?:无|不需要|无需|纯口播|同上)$/u.test(item) || seen.has(item)) continue;
+      seen.add(item);
+      assets.push(item);
+    }
+  }
+
+  // 从常见关键词中补充设备或素材需求。
   const patterns: Array<[RegExp, string]> = [
     [/游戏显卡|主机|显卡/g, "游戏显卡/主机素材"],
     [/手机/g, "手机画面素材"],
@@ -417,7 +450,6 @@ function extractAssets(visual: string, bRoll: string, alternative: string): stri
     [/领夹麦/g, "领夹麦克风"],
   ];
 
-  const seen = new Set<string>();
   for (const [pattern, label] of patterns) {
     if (pattern.test(combined) && !seen.has(label)) {
       seen.add(label);

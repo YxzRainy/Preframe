@@ -12,119 +12,65 @@ export const PLACEHOLDER_PHRASES = [
   "基础质检模板",
 ] as const;
 
+/**
+ * 新项目只生成三份用户真正会继续使用的主文档。
+ * 质检、分镜视图、拍摄清单和平台适配都由这三份文档的结构化内容派生，
+ * 不再把模型的中间思考过程拆成十篇互相复制的 Markdown。
+ */
 export const CORE_PROJECT_DOCUMENT_DEFINITIONS = [
   {
-    key: "projectOverview",
+    key: "creativeBrief",
     number: "01",
-    title: "项目概览",
-    filename: "01_项目概览.md",
-    parts: ["视频目标", "推荐方向", "执行优先级"],
-    fallbackCopy: ["视频目标与推荐方向", "结构、岗位视角与确认事项"],
-    minLength: 500,
-    requiredSections: ["视频目标", "推荐方向", "视频结构", "执行优先级", "风险边界"],
+    title: "创作简报",
+    filename: "01_创作简报.md",
+    parts: ["目标用户与任务", "核心观点", "硬约束"],
+    fallbackCopy: ["为什么做、给谁看、看完要获得什么", "时长、保留项、禁用项和事实边界"],
+    minLength: 300,
+    maxLength: 1200,
+    requiredSections: ["目标与用户", "核心观点", "内容结构", "执行约束", "事实与风险边界", "人工确认"],
   },
   {
-    key: "topicAnalysis",
+    key: "shootingExecution",
     number: "02",
-    title: "选题拆解",
-    filename: "02_选题拆解.md",
-    parts: ["用户痛点", "内容切入", "标题方向"],
-    fallbackCopy: ["如何让选题更接近真实用户需求", "痛点、切入角度与风险提醒"],
-    minLength: 600,
-    requiredSections: ["选题核心", "用户痛点", "内容切入角度", "标题方向", "内容风险提醒"],
+    title: "拍摄执行稿",
+    filename: "02_拍摄执行稿.md",
+    parts: ["最终逐字稿", "镜头执行表", "场景与素材"],
+    fallbackCopy: ["唯一锁稿口径与时长", "提词、拍摄、字幕和剪辑共用的一张执行表"],
+    minLength: 700,
+    maxLength: 3500,
+    requiredSections: ["执行摘要", "最终逐字口播稿", "镜头执行表", "场景与设备", "素材与替代方案", "拍摄风险", "锁稿检查"],
   },
   {
-    key: "spokenScript",
+    key: "publishAndReview",
     number: "03",
-    title: "口播脚本",
-    filename: "03_口播脚本.md",
-    parts: ["多版本开头", "正文脚本", "结尾引导"],
-    fallbackCopy: ["痛点型、反常识型、故事型开头", "正文节奏、转场与行动引导"],
-    minLength: 900,
-    requiredSections: ["多版本开头", "正文脚本", "转场提示", "结尾引导", "口播时长预估"],
-  },
-  {
-    key: "storyboardAndEditing",
-    number: "04",
-    title: "分镜与剪辑节奏",
-    filename: "04_分镜与剪辑节奏.md",
-    parts: ["画面", "时长", "剪辑节奏"],
-    fallbackCopy: ["镜头画面、字幕与剪辑节奏", "必拍判断、替代方案与备注"],
-    minLength: 700,
-    requiredSections: ["分镜表", "剪辑节奏", "必拍镜头", "替代方案"],
-  },
-  {
-    key: "shootingChecklist",
-    number: "05",
-    title: "拍摄清单",
-    filename: "05_拍摄清单.md",
-    parts: ["必拍镜头", "可选素材", "拍摄风险"],
-    fallbackCopy: ["必拍镜头、可选镜头与替代素材", "场景设备准备和拍摄风险"],
+    title: "发布与复盘",
+    filename: "03_发布与复盘.md",
+    parts: ["最终发布卡", "平台文案", "真实数据复盘"],
+    fallbackCopy: ["最终标题、封面和发布文案", "发布记录、数据回收与下一轮复用"],
     minLength: 500,
-    requiredSections: ["必拍镜头", "可选镜头", "可替代素材", "场景设备", "拍摄风险"],
-  },
-  {
-    key: "coverTitlesAndPostCopy",
-    number: "06",
-    title: "封面标题与发布文案",
-    filename: "06_封面标题与发布文案.md",
-    parts: ["标题评分", "发布文案", "标签建议"],
-    fallbackCopy: ["标题候选、评分与推荐理由", "小红书、抖音文案与标签建议"],
-    minLength: 800,
-    requiredSections: ["标题候选", "标题评分", "推荐理由", "小红书发布文案", "抖音发布文案", "标签建议"],
-  },
-  {
-    key: "visualPrompts",
-    number: "07",
-    title: "视觉参考提示词",
-    filename: "07_视觉参考提示词.md",
-    parts: ["封面视觉", "场景图", "负面提示"],
-    fallbackCopy: ["高质感、真实工作场景", "画面风格、镜头语言与负面词"],
-    minLength: 500,
-    requiredSections: ["封面视觉提示词", "场景图提示词", "人物视觉提示词", "负面提示词", "风格关键词"],
-  },
-  {
-    key: "qualityCheckReport",
-    number: "08",
-    title: "内容质检报告",
-    filename: "08_内容质检报告.md",
-    parts: ["AI 味", "平台风险", "可行性"],
-    fallbackCopy: ["AI 味、夸张承诺与平台风险", "原表达/场景、问题、可直接替换的新句子与优先级"],
-    minLength: 600,
-    // 08 使用专用质检表格与发布结论校验，不强制固定二级标题。
-    requiredSections: [] as unknown as readonly string[],
+    maxLength: 2000,
+    requiredSections: ["最终发布卡", "平台发布文案", "置顶评论", "发布记录", "数据复盘", "复用与下一步"],
   },
 ] as const;
 
-export const EXECUTION_DOCUMENT_DEFINITIONS = [
-  {
-    key: "finalExecutionScript",
-    number: "09",
-    title: "成片执行稿",
-    filename: "09_成片执行稿.md",
-    parts: ["逐字稿", "画面安排", "B-roll"],
-    fallbackCopy: ["最终推荐开头与逐字口播稿", "每 5-10 秒画面安排和结尾 CTA"],
-    minLength: 1000,
-    requiredSections: ["最终推荐开头", "最终逐字口播稿", "每5-10秒画面安排", "字幕重点", "B-roll插入点", "结尾CTA", "可直接照拍版本"],
-  },
-  {
-    key: "postEngagementCopy",
-    number: "10",
-    title: "发布承接话术",
-    filename: "10_发布承接话术.md",
-    parts: ["置顶评论", "私信回复", "低风险 CTA"],
-    fallbackCopy: ["评论区、私信和主页承接话术", "低风险 CTA 替代表达"],
-    minLength: 700,
-    requiredSections: ["置顶评论", "评论区高频回复", "私信回复话术", "主页/粉丝群承接", "低风险CTA"],
-  },
-] as const;
+/** 保留旧导出名，避免现有调用方在迁移期间失效。 */
+export const EXECUTION_DOCUMENT_DEFINITIONS = [] as const;
+export const PROJECT_DOCUMENT_DEFINITIONS = [...CORE_PROJECT_DOCUMENT_DEFINITIONS] as const;
 
-export const PROJECT_DOCUMENT_DEFINITIONS = [
-  ...CORE_PROJECT_DOCUMENT_DEFINITIONS,
-  ...EXECUTION_DOCUMENT_DEFINITIONS,
-] as const;
-
+/**
+ * 历史项目仍可浏览、修改和继续执行，但不会参与新项目的“三文档完整度”计算。
+ */
 export const LEGACY_DOCUMENT_DEFINITIONS = [
+  { filename: "01_项目概览.md", number: "01", title: "项目概览" },
+  { filename: "02_选题拆解.md", number: "02", title: "选题拆解" },
+  { filename: "03_口播脚本.md", number: "03", title: "口播脚本" },
+  { filename: "04_分镜与剪辑节奏.md", number: "04", title: "分镜与剪辑节奏" },
+  { filename: "05_拍摄清单.md", number: "05", title: "拍摄清单" },
+  { filename: "06_封面标题与发布文案.md", number: "06", title: "封面标题与发布文案" },
+  { filename: "07_视觉参考提示词.md", number: "07", title: "视觉参考提示词" },
+  { filename: "08_内容质检报告.md", number: "08", title: "内容质检报告" },
+  { filename: "09_成片执行稿.md", number: "09", title: "成片执行稿" },
+  { filename: "10_发布承接话术.md", number: "10", title: "发布承接话术" },
   { filename: "01_选题拆解.md", number: "01", title: "选题拆解" },
   { filename: "02_口播脚本.md", number: "02", title: "口播脚本" },
   { filename: "03_分镜草案.md", number: "03", title: "分镜草案" },
@@ -149,7 +95,7 @@ export function isVisualPromptDocument(filename: string): boolean {
 }
 
 export function isCoverPublishingDocument(filename: string): boolean {
-  return /^(?:06_封面标题与发布文案|05_封面标题)/u.test(filename);
+  return /^(?:03_发布与复盘|06_封面标题与发布文案|05_封面标题)/u.test(filename);
 }
 
 export function displayDocumentName(filename: string): { number: string; title: string; revised: boolean } {

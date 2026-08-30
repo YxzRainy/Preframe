@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "片策｜短视频前期策划工作台",
     short_name: "片策",
-    description: "输入一个选题，创建短视频内容项目并生成前期策划包，包括 10 份可修改的 Markdown 文档。",
+    description: "输入一个选题，生成创作简报、拍摄执行稿、发布与复盘三份一致的核心工作稿。",
     start_url: "/",
     display: "standalone",
     background_color: "#070a0f",

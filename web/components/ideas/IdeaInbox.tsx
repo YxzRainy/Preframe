@@ -1,18 +1,48 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Idea } from "../dashboard/types";
 import { formatRelativeTime } from "../dashboard/types";
 import { readJsonResponse } from "../../lib/readJsonResponse";
+import {
+  ArrowUpRight,
+  DotsThree,
+  Lightbulb,
+  PencilSimple,
+  Sparkle,
+  Trash,
+  X,
+} from "@phosphor-icons/react";
+
+const DRAFT_STORAGE_KEY = "preframe:ideas:draft";
+
+type Draft = {
+  text: string;
+  source: string;
+  tags: string;
+  savedAt: string;
+};
+
+const EMPTY_DRAFT: Draft = { text: "", source: "", tags: "", savedAt: "" };
+
+function parseIdeaDraft(text: string) {
+  const lines = text.split("\n");
+  const title = lines.shift()?.trim() || "未命名灵感";
+  const note = lines.join("\n").trim();
+  return { title, note };
+}
 
 export function IdeaInbox() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [draft, setDraft] = useState({ title: "", note: "", source: "", tags: "" });
+  const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [saving, setSaving] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<Idea | null>(null);
+  const [showDetails, setShowDetails] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -32,31 +62,71 @@ export function IdeaInbox() {
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
+    try {
+      const stored = localStorage.getItem(DRAFT_STORAGE_KEY);
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as Partial<Draft>;
+      if (typeof parsed.text === "string") {
+        setDraft({ ...EMPTY_DRAFT, ...parsed });
+        setDraftStatus("saved");
+      }
+    } catch {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    }
+  }, []);
+
+  useEffect(() => {
     const handler = () => load();
     window.addEventListener("piance-ideas-updated", handler);
     return () => window.removeEventListener("piance-ideas-updated", handler);
   }, [load]);
 
-  async function create(e: React.FormEvent) {
-    e.preventDefault();
-    if (!draft.title.trim()) return;
+  useEffect(() => {
+    if (!draft.text.trim() && !draft.source.trim() && !draft.tags.trim()) {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+      setDraftStatus("idle");
+      return;
+    }
+    setDraftStatus("saving");
+    const timer = window.setTimeout(() => {
+      const next = { ...draft, savedAt: new Date().toISOString() };
+      localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(next));
+      setDraft((current) => ({ ...current, savedAt: next.savedAt }));
+      setDraftStatus("saved");
+    }, 420);
+    return () => window.clearTimeout(timer);
+  }, [draft.text, draft.source, draft.tags]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        event.preventDefault();
+        void create();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
+  async function create() {
+    if (!draft.text.trim() || saving) return;
     setSaving(true);
+    setError("");
     try {
+      const { title, note } = parseIdeaDraft(draft.text.trim());
       const tags = draft.tags.split(/[,，\s]+/).map((t) => t.trim()).filter(Boolean);
       const response = await fetch("/api/ideas", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: draft.title.trim(),
-          note: draft.note.trim() || undefined,
-          source: draft.source.trim() || undefined,
-          tags,
-        }),
+        body: JSON.stringify({ title, note: note || undefined, source: draft.source.trim() || undefined, tags }),
       });
       const data = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(data.error || "灵感创建失败。");
-      setDraft({ title: "", note: "", source: "", tags: "" });
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+      setDraft(EMPTY_DRAFT);
+      setShowDetails(false);
       await load();
+      textareaRef.current?.focus();
     } catch (err) {
       setError(err instanceof Error ? err.message : "灵感创建失败。");
     } finally {
@@ -68,9 +138,11 @@ export function IdeaInbox() {
     const prev = ideas;
     setIdeas((cur) => cur.filter((i) => i.id !== id));
     try {
-      await fetch(`/api/ideas/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const response = await fetch(`/api/ideas/${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!response.ok) throw new Error("删除失败");
     } catch {
       setIdeas(prev);
+      setError("删除失败，请稍后重试。");
     }
   }
 
@@ -90,12 +162,7 @@ export function IdeaInbox() {
       const response = await fetch(`/api/ideas/${encodeURIComponent(editDraft.id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: editDraft.title,
-          note: editDraft.note,
-          source: editDraft.source,
-          tags: editDraft.tags,
-        }),
+        body: JSON.stringify({ title: editDraft.title, note: editDraft.note, source: editDraft.source, tags: editDraft.tags }),
       });
       const data = await readJsonResponse<{ error?: string }>(response);
       if (!response.ok) throw new Error(data.error || "灵感更新失败。");
@@ -112,116 +179,113 @@ export function IdeaInbox() {
     }));
   }
 
+  const savedIdeas = useMemo(() => ideas.filter((idea) => !idea.convertedProjectSlug), [ideas]);
+  const convertedIdeas = useMemo(() => ideas.filter((idea) => Boolean(idea.convertedProjectSlug)), [ideas]);
+  const hasDraft = Boolean(draft.text.trim() || draft.source.trim() || draft.tags.trim());
+
   return (
-    <div className="idea-inbox">
-      <form className="idea-create-card" onSubmit={create}>
-        <input
-          type="text"
-          placeholder="一句话写下灵感…"
-          value={draft.title}
-          onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
-          className="idea-create-title"
-        />
-        <textarea
-          placeholder="补充说明（可选）"
-          value={draft.note}
-          rows={2}
-          onChange={(e) => setDraft((d) => ({ ...d, note: e.target.value }))}
-        />
-        <div className="idea-create-meta">
-          <input
-            type="text"
-            placeholder="来源（可选）"
-            value={draft.source}
-            onChange={(e) => setDraft((d) => ({ ...d, source: e.target.value }))}
-          />
-          <input
-            type="text"
-            placeholder="标签，逗号分隔"
-            value={draft.tags}
-            onChange={(e) => setDraft((d) => ({ ...d, tags: e.target.value }))}
-          />
+    <section className="ideas-workspace" aria-label="灵感">
+      <header className="ideas-hero-row">
+        <h1>灵感</h1>
+        <div className={`ideas-live-state ${draftStatus === "saving" ? "is-saving" : ""}`} aria-live="polite" aria-label={draftStatus === "saving" ? "正在保存草稿" : "草稿自动保存已开启"} title={draftStatus === "saving" ? "保存中" : "草稿自动保存已开启"}>
+          <span className="ideas-live-pulse" />
+          {draftStatus === "saving" && <span>保存中</span>}
         </div>
-        <div className="idea-create-actions">
-          <button type="submit" className="primary-button" disabled={saving || !draft.title.trim()}>
-            {saving ? "保存中…" : "记录灵感"}
-          </button>
-        </div>
-      </form>
+      </header>
 
-      {error && <div className="idea-error">{error}</div>}
-
-      {loading ? (
-        <p className="idea-muted">读取中…</p>
-      ) : ideas.length === 0 ? (
-        <div className="idea-empty">
-          <p>还没有灵感。</p>
-          <p>随手记下任何想法，不用想清楚再写。</p>
+      <div className="ideas-grid">
+        <div className="ideas-capture-column">
+          <form className="ideas-capture-card" onSubmit={(event) => { event.preventDefault(); void create(); }}>
+            <textarea
+              ref={textareaRef}
+              aria-label="写下灵感"
+              value={draft.text}
+              onChange={(event) => setDraft((current) => ({ ...current, text: event.target.value }))}
+              placeholder="写下一个想法…"
+              rows={7}
+              autoFocus
+            />
+            {showDetails && (
+              <div className="ideas-detail-fields">
+                <input aria-label="灵感来源" value={draft.source} onChange={(event) => setDraft((current) => ({ ...current, source: event.target.value }))} placeholder="来源" />
+                <input aria-label="灵感标签" value={draft.tags} onChange={(event) => setDraft((current) => ({ ...current, tags: event.target.value }))} placeholder="标签" />
+              </div>
+            )}
+            <footer className="ideas-capture-footer">
+              <button type="button" className={`ideas-detail-toggle ${showDetails ? "is-open" : ""}`} aria-label={showDetails ? "收起来源和标签" : "添加来源和标签"} title={showDetails ? "收起来源和标签" : "添加来源和标签"} onClick={() => setShowDetails((current) => !current)}>
+                <DotsThree size={19} weight="bold" />
+              </button>
+              <div className="ideas-capture-actions">
+                <span className="ideas-shortcut" aria-label="按 Command 加 Enter 保存">⌘ ↵</span>
+                <button type="submit" className="ideas-save-button" disabled={saving || !draft.text.trim()}>
+                  {saving ? "保存中" : "保存"}<ArrowUpRight size={15} weight="bold" />
+                </button>
+              </div>
+            </footer>
+          </form>
         </div>
-      ) : (
-        <ul className="idea-list">
-          {ideas.map((idea) => (
-            <li key={idea.id} className={`idea-item ${idea.convertedProjectSlug ? "converted" : ""}`}>
-              {editingId === idea.id && editDraft ? (
-                <div className="idea-edit">
-                  <input
-                    type="text"
-                    value={editDraft.title}
-                    onChange={(e) => setEditDraft((d) => d ? { ...d, title: e.target.value } : d)}
-                  />
-                  <textarea
-                    rows={2}
-                    value={editDraft.note || ""}
-                    onChange={(e) => setEditDraft((d) => d ? { ...d, note: e.target.value } : d)}
-                  />
-                  <input
-                    type="text"
-                    placeholder="来源"
-                    value={editDraft.source || ""}
-                    onChange={(e) => setEditDraft((d) => d ? { ...d, source: e.target.value } : d)}
-                  />
-                  <input
-                    type="text"
-                    placeholder="标签，逗号分隔"
-                    value={editDraft.tags.join(", ")}
-                    onChange={(e) => setEditDraft((d) => d ? { ...d, tags: e.target.value.split(/[,，\s]+/).filter(Boolean) } : d)}
-                  />
-                  <div className="idea-edit-actions">
-                    <button type="button" className="primary-button" onClick={saveEdit}>保存</button>
-                    <button type="button" className="secondary-button" onClick={cancelEdit}>取消</button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="idea-item-head">
-                    <h3 className="idea-item-title">{idea.title}</h3>
-                    {idea.convertedProjectSlug && <span className="idea-converted-badge">已转项目</span>}
-                  </div>
-                  {idea.note && <p className="idea-item-note">{idea.note}</p>}
-                  <div className="idea-item-meta">
-                    {idea.source && <span className="idea-source">来源 · {idea.source}</span>}
-                    {idea.tags.length > 0 && (
-                      <span className="idea-tags">
-                        {idea.tags.map((t) => (<span key={t} className="idea-tag">#{t}</span>))}
-                      </span>
-                    )}
-                    <span className="idea-time">{formatRelativeTime(idea.createdAt)}</span>
-                  </div>
-                  <div className="idea-item-actions">
-                    {!idea.convertedProjectSlug && (
-                      <button type="button" className="idea-action primary" onClick={() => convertToProject(idea)}>
-                        转换为内容项目
-                      </button>
-                    )}
-                    <button type="button" className="idea-action" onClick={() => startEdit(idea)}>编辑</button>
-                    <button type="button" className="idea-action danger" onClick={() => remove(idea.id)}>删除</button>
-                  </div>
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+
+        <aside className="ideas-side-column">
+          <div className="ideas-side-heading">
+            <div><span>已记录</span><strong>{savedIdeas.length + convertedIdeas.length}</strong></div>
+            <Lightbulb size={19} weight="duotone" aria-hidden="true" />
+          </div>
+          {error && <div className="idea-error">{error}</div>}
+          {loading ? (
+            <p className="idea-muted">读取中…</p>
+          ) : ideas.length === 0 ? (
+            <div className="ideas-empty-state" aria-label="暂无灵感"><Sparkle size={25} weight="duotone" aria-hidden="true" /></div>
+          ) : (
+            <div className="ideas-stream">
+              {savedIdeas.map((idea) => (
+                <IdeaCard key={idea.id} idea={idea} editingId={editingId} editDraft={editDraft} setEditDraft={setEditDraft} startEdit={startEdit} cancelEdit={cancelEdit} saveEdit={saveEdit} convertToProject={convertToProject} remove={remove} />
+              ))}
+              {convertedIdeas.length > 0 && <div className="ideas-converted-divider"><span>已转为项目</span></div>}
+              {convertedIdeas.map((idea) => (
+                <IdeaCard key={idea.id} idea={idea} editingId={editingId} editDraft={editDraft} setEditDraft={setEditDraft} startEdit={startEdit} cancelEdit={cancelEdit} saveEdit={saveEdit} convertToProject={convertToProject} remove={remove} />
+              ))}
+            </div>
+          )}
+        </aside>
+      </div>
+    </section>
   );
+}
+
+type IdeaCardProps = {
+  idea: Idea;
+  editingId: string | null;
+  editDraft: Idea | null;
+  setEditDraft: React.Dispatch<React.SetStateAction<Idea | null>>;
+  startEdit: (idea: Idea) => void;
+  cancelEdit: () => void;
+  saveEdit: () => void;
+  convertToProject: (idea: Idea) => void;
+  remove: (id: string) => void;
+};
+
+function IdeaCard({ idea, editingId, editDraft, setEditDraft, startEdit, cancelEdit, saveEdit, convertToProject, remove }: IdeaCardProps) {
+  if (editingId === idea.id && editDraft) {
+    return <article className="idea-stream-card idea-edit-card">
+      <input value={editDraft.title} onChange={(event) => setEditDraft((current) => current ? { ...current, title: event.target.value } : current)} />
+      <textarea rows={3} value={editDraft.note || ""} onChange={(event) => setEditDraft((current) => current ? { ...current, note: event.target.value } : current)} />
+      <input placeholder="来源" value={editDraft.source || ""} onChange={(event) => setEditDraft((current) => current ? { ...current, source: event.target.value } : current)} />
+      <input placeholder="标签，用逗号分隔" value={editDraft.tags.join(", ")} onChange={(event) => setEditDraft((current) => current ? { ...current, tags: event.target.value.split(/[,，\s]+/).filter(Boolean) } : current)} />
+      <div className="idea-edit-actions"><button type="button" className="ideas-save-button" onClick={saveEdit}>保存</button><button type="button" className="ideas-detail-toggle" onClick={cancelEdit}><X size={15} />取消</button></div>
+    </article>;
+  }
+
+  return <article className={`idea-stream-card ${idea.convertedProjectSlug ? "is-converted" : ""}`}>
+    <div className="idea-stream-card-top"><span className="idea-stream-time">{formatRelativeTime(idea.updatedAt || idea.createdAt)}</span><button className="idea-icon-button" type="button" aria-label="编辑灵感" onClick={() => startEdit(idea)}><PencilSimple size={15} /></button></div>
+    <h3>{idea.title}</h3>
+    {idea.note && <p>{idea.note}</p>}
+    <div className="idea-stream-meta">
+      {idea.source && <span>{idea.source}</span>}
+      {idea.tags.map((tag) => <span key={tag}>#{tag}</span>)}
+    </div>
+    <div className="idea-stream-actions">
+      {!idea.convertedProjectSlug && <button type="button" onClick={() => convertToProject(idea)}>转成项目 <ArrowUpRight size={14} /></button>}
+      <button type="button" className="idea-delete-button" aria-label="删除灵感" onClick={() => remove(idea.id)}><Trash size={14} /></button>
+    </div>
+  </article>;
 }

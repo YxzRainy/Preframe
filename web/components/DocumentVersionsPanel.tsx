@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ArrowsClockwise, ClockCounterClockwise, GitDiff } from "@phosphor-icons/react";
+import { useEffect, useId, useState } from "react";
+import { ArrowsClockwise, CaretDown, ClockCounterClockwise, GitDiff } from "@phosphor-icons/react";
 import { readJsonResponse } from "../lib/readJsonResponse";
 
 interface VersionSummary {
   id: string;
   createdAt: string;
-  reason: "generated" | "regenerate" | "refine-source" | "refine-result" | "rollback";
+  reason: "generated" | "regenerate" | "refine-source" | "refine-result" | "manual-save" | "rollback";
   current?: boolean;
   size: number;
 }
@@ -17,6 +17,7 @@ const REASON_LABELS: Record<VersionSummary["reason"], string> = {
   regenerate: "重新生成前",
   "refine-source": "AI 修改前",
   "refine-result": "AI 修改结果",
+  "manual-save": "手动编辑前",
   rollback: "回滚前",
 };
 
@@ -26,12 +27,14 @@ export function DocumentVersionsPanel({
   retrying,
   onRetry,
   onChanged,
+  refreshToken = 0,
 }: {
   slug: string;
   fileName: string;
   retrying: boolean;
   onRetry: () => Promise<void>;
   onChanged: () => Promise<void>;
+  refreshToken?: number;
 }) {
   const [versions, setVersions] = useState<VersionSummary[]>([]);
   const [selected, setSelected] = useState("");
@@ -39,7 +42,10 @@ export function DocumentVersionsPanel({
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [open, setOpen] = useState(false);
+  const contentId = useId();
   const canonical = /^\d{2}_.+\.md$/u.test(fileName) && !/_修改版/u.test(fileName);
+  const historicalVersions = Math.max(0, versions.length - 1);
 
   async function load() {
     if (!fileName) return;
@@ -62,7 +68,7 @@ export function DocumentVersionsPanel({
     setDiff("");
     setSelected("");
     load().catch(() => undefined);
-  }, [fileName, slug]);
+  }, [fileName, slug, refreshToken]);
 
   async function compare() {
     if (!selected) return;
@@ -104,32 +110,47 @@ export function DocumentVersionsPanel({
   }
 
   return (
-    <details className="project-tool-details version-details">
-      <summary><span>版本与恢复</span><small>{Math.max(0, versions.length - 1)} 个历史版本</small></summary>
-      <div className="version-toolbar">
-        {canonical && (
-          <button type="button" className="agent-action secondary" disabled={retrying || busy} onClick={() => onRetry().then(load)}>
-            <ArrowsClockwise size={15} weight="bold" />{retrying ? "重试中" : "重新生成当前文档"}
-          </button>
-        )}
-        <label className="command-field">
-          <span>历史版本</span>
-          <select value={selected} disabled={loading || versions.length < 2} onChange={(event) => { setSelected(event.target.value); setDiff(""); }}>
-            <option value="">{loading ? "读取中…" : "选择一个版本"}</option>
-            {versions.filter((version) => !version.current).map((version) => (
-              <option key={version.id} value={version.id}>
-                {REASON_LABELS[version.reason]} · {new Date(version.createdAt).toLocaleString("zh-CN")}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="version-actions">
-          <button type="button" disabled={!selected || busy} onClick={compare}><GitDiff size={15} />查看差异</button>
-          <button type="button" disabled={!selected || busy} onClick={rollback}><ClockCounterClockwise size={15} />回滚</button>
+    <section className={`project-tool-details version-details ${open ? "is-open" : ""}`}>
+      <button
+        type="button"
+        className="version-details-toggle"
+        aria-expanded={open}
+        aria-controls={contentId}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span>版本与恢复</span>
+        <small>{historicalVersions} 个历史版本</small>
+        <CaretDown className="version-details-caret" size={16} weight="bold" aria-hidden="true" />
+      </button>
+      <div className="version-details-expansion" id={contentId} aria-hidden={!open}>
+        <div className="version-details-content">
+          <div className="version-toolbar">
+            {canonical && (
+              <button type="button" className="agent-action secondary version-regenerate-button" disabled={retrying || busy} onClick={() => onRetry().then(load)}>
+                <ArrowsClockwise size={15} weight="bold" />{retrying ? "重试中" : "重新生成当前文档"}
+              </button>
+            )}
+            {historicalVersions === 0 && !loading && <p className="version-empty-note">重新生成、AI 修改或手动保存后，旧内容会出现在这里。</p>}
+            <label className="command-field">
+              <span>历史版本</span>
+              <select value={selected} disabled={loading || versions.length < 2} onChange={(event) => { setSelected(event.target.value); setDiff(""); }}>
+                <option value="">{loading ? "读取中…" : "选择一个版本"}</option>
+                {versions.filter((version) => !version.current).map((version) => (
+                  <option key={version.id} value={version.id}>
+                    {REASON_LABELS[version.reason]} · {new Date(version.createdAt).toLocaleString("zh-CN")}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="version-actions">
+              <button type="button" disabled={!selected || busy} onClick={compare}><GitDiff size={15} />查看差异</button>
+              <button type="button" disabled={!selected || busy} onClick={rollback}><ClockCounterClockwise size={15} />回滚</button>
+            </div>
+          </div>
+          {diff && <pre className="version-diff" aria-label="版本差异">{diff}</pre>}
+          {error && <p className="stage-error">{error}</p>}
         </div>
       </div>
-      {diff && <pre className="version-diff" aria-label="版本差异">{diff}</pre>}
-      {error && <p className="stage-error">{error}</p>}
-    </details>
+    </section>
   );
 }

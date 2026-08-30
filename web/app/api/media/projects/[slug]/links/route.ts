@@ -11,6 +11,7 @@ import {
   reassignLink,
 } from "../../../../../../../src/services/shotAssetLinkStore.js";
 import { matchShotsForProject } from "../../../../../../../src/services/shotAssetMatcher.js";
+import { syncProjectAssetState } from "../../../../../../../src/services/projectAssetState.js";
 import type { MediaAsset, ShotAssetLink } from "../../../../../../../src/types/mediaAsset.js";
 
 export const runtime = "nodejs";
@@ -80,7 +81,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
       if (!linkId) return apiError(new Error("缺少 linkId。"), "media", "缺少 linkId。", 400);
       const primary = body.primary !== false;
       const links = await confirmLink(linkId, primary);
-      return NextResponse.json({ ok: true, success: true, links: await enrichLinks(links.filter((l) => l.projectSlug === slug)) });
+      const assetState = await syncProjectAssetState(slug);
+      return NextResponse.json({ ok: true, success: true, links: await enrichLinks(links.filter((l) => l.projectSlug === slug)), assetState });
     }
     if (action === "batch-confirm") {
       const linkIds = Array.isArray(body.linkIds)
@@ -88,7 +90,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
         : [];
       if (linkIds.length === 0) return apiError(new Error("缺少 linkIds。"), "media", "缺少 linkIds。", 400);
       const links = await batchConfirmLinks(linkIds);
-      return NextResponse.json({ ok: true, success: true, links: await enrichLinks(links.filter((l) => l.projectSlug === slug)), confirmedCount: linkIds.length });
+      const assetState = await syncProjectAssetState(slug);
+      return NextResponse.json({ ok: true, success: true, links: await enrichLinks(links.filter((l) => l.projectSlug === slug)), confirmedCount: linkIds.length, assetState });
     }
     if (action === "reject") {
       const linkId = typeof body.linkId === "string" ? body.linkId : "";
@@ -101,7 +104,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
       const newShotTaskId = typeof body.shotTaskId === "string" ? body.shotTaskId : "";
       if (!linkId || !newShotTaskId) return apiError(new Error("缺少 linkId 或 shotTaskId。"), "media", "缺少 linkId 或 shotTaskId。", 400);
       const links = await reassignLink(linkId, newShotTaskId);
-      return NextResponse.json({ ok: true, success: true, links: await enrichLinks(links.filter((l) => l.projectSlug === slug)) });
+      const assetState = await syncProjectAssetState(slug);
+      return NextResponse.json({ ok: true, success: true, links: await enrichLinks(links.filter((l) => l.projectSlug === slug)), assetState });
     }
     if (action === "manual-link") {
       const shotTaskId = typeof body.shotTaskId === "string" ? body.shotTaskId : "";
@@ -109,7 +113,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
       if (!shotTaskId || !assetId) return apiError(new Error("缺少 shotTaskId 或 assetId。"), "media", "缺少 shotTaskId 或 assetId。", 400);
       await manualLink(slug, shotTaskId, assetId);
       const links = await getLinksForProject(slug);
-      return NextResponse.json({ ok: true, success: true, links: await enrichLinks(links) });
+      const assetState = await syncProjectAssetState(slug);
+      return NextResponse.json({ ok: true, success: true, links: await enrichLinks(links), assetState });
     }
 
     return apiError(new Error(`未知操作：${action}`), "media", `未知操作：${action}`, 400);

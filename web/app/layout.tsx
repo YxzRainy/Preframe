@@ -4,6 +4,8 @@ import "./globals.css";
 import { TopBar } from "../components/TopBar";
 import { AppSidebar } from "../components/AppSidebar";
 import { CreateProjectFlow } from "../components/CreateProjectFlow";
+import { RouteTransition } from "../components/RouteTransition";
+import { CommandPalette } from "../components/CommandPalette";
 import { getCreatorProfile } from "../../src/services/profileConfig";
 import { getWorkspaceStats } from "../../src/services/workspaceConfig";
 
@@ -15,7 +17,7 @@ export const metadata: Metadata = {
     template: "片策｜%s",
   },
   applicationName: "片策",
-  description: "输入一个选题，创建短视频内容项目并生成前期策划包，包括项目概览、选题拆解、口播脚本、分镜与剪辑节奏、拍摄清单、封面标题与发布文案、视觉参考提示词和内容质检报告。",
+  description: "输入一个选题，生成三份一致的核心工作稿：创作简报、可直接拍摄的执行稿，以及发布与真实数据复盘。",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
@@ -31,7 +33,7 @@ export const metadata: Metadata = {
     locale: "zh_CN",
     siteName: "片策",
     title: "片策｜工作台",
-    description: "输入一个选题，创建短视频内容项目并生成前期策划包，包括项目概览、选题拆解、口播脚本、分镜与剪辑节奏、拍摄清单、封面标题与发布文案、视觉参考提示词和内容质检报告。",
+    description: "输入一个选题，生成三份一致的核心工作稿：创作简报、可直接拍摄的执行稿，以及发布与真实数据复盘。",
   },
 };
 
@@ -72,7 +74,8 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
       <body>
         <AppSidebar initialWorkspace={workspace} />
         <TopBar initialProfile={{ name: profile.name, avatarUrl: "/api/profile/avatar" }} />
-        <div className="app-main-shell">{children}</div>
+        <div className="app-main-shell"><RouteTransition>{children}</RouteTransition></div>
+        <CommandPalette />
         <Suspense fallback={null}><CreateProjectFlow /></Suspense>
       </body>
     </html>

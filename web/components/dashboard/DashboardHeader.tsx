@@ -10,11 +10,6 @@ function greeting(hour: number): string {
   return "夜深了，注意休息";
 }
 
-function formatDate(d: Date): string {
-  const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 · ${weekdays[d.getDay()]}`;
-}
-
 interface DashboardHeaderProps {
   initialNowIso: string;
 }
@@ -27,15 +22,11 @@ export function DashboardHeader({ initialNowIso }: DashboardHeaderProps) {
     return () => window.clearInterval(timer);
   }, []);
 
-  const dateDisplay = formatDate(now);
   const greetingDisplay = greeting(now.getHours());
 
   return (
     <header className="dashboard-header">
       <div className="dashboard-header-left">
-        <div className="dashboard-header-meta">
-          <p className="dashboard-date">{dateDisplay}</p>
-        </div>
         <h1 className="dashboard-greeting">
           {greetingDisplay}。
         </h1>

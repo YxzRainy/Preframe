@@ -18,7 +18,7 @@ import path from "node:path";
 
 import { readMediaAssets, updateAssets, findByPath } from "./mediaAssetStore.js";
 import { readEditingManifest, relinkManifestEntry } from "./editingPrepBuilder.js";
-import { normalizeVideoName } from "./finalVideoWatcher.js";
+import { normalizeMediaFileName } from "./mediaFileName.js";
 import type { EditingManifestEntry } from "../types/editingManifest.js";
 import type { MediaAsset } from "../types/mediaAsset.js";
 
@@ -120,7 +120,7 @@ async function scanDirectory(rootDir: string, maxFiles = 2000): Promise<Candidat
             name,
             size: s.size,
             mtime: s.mtimeMs,
-            normalizedName: normalizeVideoName(name),
+            normalizedName: normalizeMediaFileName(name),
           });
         }
       } catch { /* ignore */ }
@@ -179,7 +179,7 @@ export async function relinkFromDirectory(
     }
     const nm = path.basename(entry.originalFileName);
     pushMap(missingByName, nm, entry);
-    pushMap(missingByNormalizedName, normalizeVideoName(entry.originalFileName), entry);
+    pushMap(missingByNormalizedName, normalizeMediaFileName(entry.originalFileName), entry);
     if (entry.duration && entry.duration > 0) {
       pushMap(missingBySizeDuration, `${entry.sizeBytes}|${Math.round(entry.duration)}`, entry);
     }
@@ -337,7 +337,7 @@ export async function confirmAmbiguousRelink(
     name: path.basename(newPath),
     size: 0,
     mtime: 0,
-    normalizedName: normalizeVideoName(path.basename(newPath)),
+    normalizedName: normalizeMediaFileName(path.basename(newPath)),
   }, allAssets);
   return { ok: true, reason: "已重新关联。" };
 }

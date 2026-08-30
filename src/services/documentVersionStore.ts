@@ -3,7 +3,7 @@ import path from "node:path";
 import { resolveProjectDirectory } from "./projectManager.js";
 import { writeMarkdown } from "./fileWriter.js";
 
-export type DocumentVersionReason = "generated" | "regenerate" | "refine-source" | "refine-result" | "rollback";
+export type DocumentVersionReason = "generated" | "regenerate" | "refine-source" | "refine-result" | "auto-repair" | "manual-save" | "rollback" | "workflow-migration";
 
 export interface DocumentVersion {
   id: string;

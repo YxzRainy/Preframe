@@ -23,10 +23,12 @@ function normalizeCommonCharacters(raw: string): string {
 }
 
 export function cleanModelOutput(raw: string): string {
-  return normalizeCommonCharacters(raw)
+  return raw
+    .replace(/^\uFEFF/u, "")
     .replace(/<think\b[^>]*>[\s\S]*?<\/think>/giu, "")
     .replace(/```\s*(?:json)?\s*/giu, "")
     .replace(/```/gu, "")
+    .replace(/\u00A0/gu, " ")
     .trim();
 }
 
@@ -71,13 +73,20 @@ export function parseModelJsonObject(raw: string, label: string): Record<string,
   const cleanedResult = tryParse(cleaned);
   if (cleanedResult) return cleanedResult;
 
-  const candidates = objectCandidates(cleaned);
+  // Only normalize smart quotes after trying the wrapper-stripped JSON unchanged.
+  // Curly quotes are common prose inside Markdown and must not become unescaped JSON delimiters.
+  const normalized = normalizeCommonCharacters(cleaned);
+  const normalizedResult = normalized === cleaned ? null : tryParse(normalized);
+  if (normalizedResult) return normalizedResult;
+
+  const sources = normalized === cleaned ? [cleaned] : [cleaned, normalized];
+  const candidates = sources.flatMap(objectCandidates);
   for (const candidate of candidates) {
     const parsed = tryParse(candidate);
     if (parsed) return parsed;
   }
 
-  for (const candidate of [...candidates, cleaned]) {
+  for (const candidate of [...candidates, ...sources]) {
     try {
       const repaired = tryParse(jsonrepair(candidate));
       if (repaired) return repaired;

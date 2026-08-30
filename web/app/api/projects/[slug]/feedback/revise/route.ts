@@ -39,7 +39,10 @@ function validateOutput(files: Array<{ filename: string; content: string }>, met
   for (const file of files) {
     const definition = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.filename === file.filename);
     if (!definition) continue;
-    errors.push(...validateDocument(file.content, definition, input, files.filter((item) => item.filename !== file.filename).map((item) => ({ name: item.filename, content: item.content }))));
+    const brief = metadata.projectBrief && typeof metadata.projectBrief === "object" && !Array.isArray(metadata.projectBrief)
+      ? metadata.projectBrief as Parameters<typeof validateDocument>[4]
+      : undefined;
+    errors.push(...validateDocument(file.content, definition, input, files.filter((item) => item.filename !== file.filename).map((item) => ({ name: item.filename, content: item.content })), brief));
   }
   return [...new Set(errors)];
 }
@@ -59,7 +62,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     const input = projectInput(metadata, slug);
     const feedbackText = [feedback.title, feedback.overallNote, feedback.scriptAdjustments, feedback.storyboardAdjustments, feedback.checklistAdjustments].filter(Boolean).join("\n") + "\n" + JSON.stringify(feedback);
     const strategy = typeof metadata.shootingStrategy === "object" && metadata.shootingStrategy ? JSON.stringify(metadata.shootingStrategy) : "";
-    let raw = await runWithWebModelAccess(body, () => callModel(buildFeedbackRevisionPrompt(input, sourceFiles, feedbackText, strategy)));
+    const promptFiles = [project.files.find((file) => file.name === "01_创作简报.md"), ...sourceFiles].filter(Boolean) as Array<{ name: string; content: string }>;
+    let raw = await runWithWebModelAccess(body, () => callModel(buildFeedbackRevisionPrompt(input, promptFiles, feedbackText, strategy)));
     let files: Array<{ filename: string; content: string }>;
     let errors: string[] = [];
     try {

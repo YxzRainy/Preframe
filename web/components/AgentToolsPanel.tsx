@@ -1,16 +1,7 @@
 "use client";
 
-import type { FormEvent, ReactNode } from "react";
-import {
-  ArrowUpRight,
-  CheckCircle,
-  Export,
-  FolderOpen,
-  MagicWand,
-  Sparkle,
-} from "@phosphor-icons/react";
-import { StatusBadge } from "./StatusBadge";
-import { DocumentVersionsPanel } from "./DocumentVersionsPanel";
+import type { FormEvent } from "react";
+import { ArrowClockwise, Sparkle } from "@phosphor-icons/react";
 
 export interface CoverSummary {
   name: string;
@@ -19,26 +10,16 @@ export interface CoverSummary {
 
 interface AgentToolsPanelProps {
   slug: string;
-  isVisualPrompt: boolean;
-  feedback: string;
-  assetPath: string;
   coverPrompt: string;
   coverRatio: string;
   covers: CoverSummary[];
-  refining: boolean;
-  scanning: boolean;
   generatingCover: boolean;
-  activeFileName: string;
-  retryingDocument: boolean;
-  onFeedbackChange: (value: string) => void;
-  onAssetPathChange: (value: string) => void;
+  regeneratingCoverPrompt: boolean;
+  disabled?: boolean;
   onCoverPromptChange: (value: string) => void;
+  onRegenerateCoverPrompt: () => void;
   onCoverRatioChange: (value: string) => void;
-  onRefine: (event: FormEvent<HTMLFormElement>) => void;
-  onScan: (event: FormEvent<HTMLFormElement>) => void;
   onCreateCover: (event: FormEvent<HTMLFormElement>) => void;
-  onRetryDocument: () => Promise<void>;
-  onDocumentChanged: () => Promise<void>;
 }
 
 const COVER_RATIOS = [
@@ -49,85 +30,56 @@ const COVER_RATIOS = [
   { value: "16:9", label: "16:9 横屏" },
 ];
 
-const REFINE_PRESETS = [
-  "前三秒更抓人，减少书面感",
-  "压缩篇幅，保留核心观点",
-  "增加具体案例和行动建议",
-  "调整为更自然的真人口播",
-];
-
 function coverUrl(slug: string, filename: string): string {
   return `/api/projects/${encodeURIComponent(slug)}/covers/${encodeURIComponent(filename)}`;
 }
 
-function ToolIcon({ children }: { children: ReactNode }) {
-  return <span className="tool-icon" aria-hidden="true">{children}</span>;
-}
-
+/** Shown for the current 03 发布与复盘 document or legacy visual-reference documents. */
 export function AgentToolsPanel(props: AgentToolsPanelProps) {
-  const hasProject = Boolean(props.slug);
   return (
-    <aside className="agent-panel">
-      <header className="agent-panel-header">
-        <div><span className="section-index">工具 02</span><h2>智能工具</h2><p>为当前文档调用专项能力</p></div>
-        <StatusBadge tone="ready">就绪</StatusBadge>
-      </header>
-
-      <div className="agent-tool-stack">
-        {props.isVisualPrompt && (
-          <section className="agent-tool-card cover-tool">
-            <div className="tool-card-heading"><ToolIcon><Sparkle size={17} weight="fill" /></ToolIcon><div><span>图片生成</span><h3>封面生成器</h3></div><i className="tool-state-dot" /></div>
-            <p className="tool-description">解析视觉提示词，按指定画幅生成封面并归档。</p>
-            <form onSubmit={props.onCreateCover}>
-            <label className="command-field"><span>视觉指令</span><textarea required rows={5} value={props.coverPrompt} onChange={(event) => props.onCoverPromptChange(event.target.value)} placeholder="输入主体、构图、色彩和留白要求…" /></label>
-              <label className="command-field"><span>输出画幅</span><select value={props.coverRatio} onChange={(event) => props.onCoverRatioChange(event.target.value)}>{COVER_RATIOS.map((ratio) => <option value={ratio.value} key={ratio.value}>{ratio.label}</option>)}</select></label>
-              <button className="agent-action primary" disabled={props.generatingCover} type="submit">{props.generatingCover ? <><span className="spinner" />正在生成封面</> : <><Sparkle size={16} weight="fill" />生成封面</>}</button>
-            </form>
-            {props.covers.length > 0 && <div className="cover-gallery"><p>已生成封面</p>{props.covers.map((cover) => <a href={coverUrl(props.slug, cover.name)} target="_blank" rel="noreferrer" key={cover.name} title="打开原图"><img src={coverUrl(props.slug, cover.name)} alt="已生成的短视频封面" /></a>)}</div>}
-          </section>
-        )}
-
-        <section className="agent-tool-card project-tools-card">
-          <div className="tool-card-heading"><ToolIcon><MagicWand size={17} weight="fill" /></ToolIcon><div><span>当前文档</span><h3>编辑与管理</h3></div><i className="tool-state-dot idle" /></div>
-          <div className="project-tools-list">
-            <details className="project-tool-details" open>
-              <summary><span>修改当前文档</span><small>根据指令生成修改版</small></summary>
-              <p className="tool-description compact">向当前文档下达自然语言指令，原始版本不会被覆盖。</p>
-              <form onSubmit={props.onRefine}>
-                <label className="command-field"><span>优化指令</span><textarea required rows={4} value={props.feedback} onChange={(event) => props.onFeedbackChange(event.target.value)} placeholder="例如：前三秒更抓人，减少书面感，保留核心观点。" /></label>
-                <div className="quick-instructions" aria-label="常用优化指令">{REFINE_PRESETS.map((preset) => <button type="button" onClick={() => props.onFeedbackChange(preset)} key={preset}>{preset}</button>)}</div>
-                <div className="tool-ready-line"><span className="pulse-dot" />{props.feedback ? "指令已输入，可生成修改版" : "等待优化指令"}</div>
-                <button className="agent-action primary" disabled={props.refining} type="submit">{props.refining ? <><span className="spinner" />正在生成修改版</> : <><ArrowUpRight size={16} weight="bold" />生成修改版</>}</button>
-              </form>
-            </details>
-
-            <details className="project-tool-details">
-              <summary><span>素材扫描</span><small>生成素材清单</small></summary>
-              <p className="tool-description compact">扫描本地素材目录，生成素材清单，方便拍摄和剪辑时对照使用。</p>
-              <form onSubmit={props.onScan}>
-                <label className="command-field"><span>本地素材路径</span><input required value={props.assetPath} onChange={(event) => props.onAssetPathChange(event.target.value)} placeholder="/Users/name/Videos/project" /></label>
-                <button className="agent-action secondary" disabled={!hasProject || props.scanning} type="submit">{!hasProject ? "请先创建内容项目" : props.scanning ? <><span className="spinner dark" />正在生成素材清单</> : <><FolderOpen size={16} />生成素材清单</>}</button>
-              </form>
-            </details>
-
-            <DocumentVersionsPanel
-              slug={props.slug}
-              fileName={props.activeFileName}
-              retrying={props.retryingDocument}
-              onRetry={props.onRetryDocument}
-              onChanged={props.onDocumentChanged}
-            />
-
-            <div className="project-tool-row">
-              <div><strong>导出 Markdown</strong><small>导出当前文档原始格式</small></div>
-              <button type="button" onClick={() => document.querySelector<HTMLButtonElement>("[data-export-current]")?.click()}><Export size={14} />导出</button>
-            </div>
+    <aside className="agent-panel cover-generator-panel" aria-label="封面生成">
+      <section className="cover-generator-tool">
+        <header className="cover-generator-header">
+          <h2>生成封面</h2>
+          <p>根据最终发布卡或视觉参考生成封面。</p>
+        </header>
+        <form onSubmit={props.onCreateCover}>
+          <div className="cover-prompt-heading">
+            <span>视觉指令</span>
+            <button className="cover-prompt-regenerate" type="button" disabled={props.disabled || props.regeneratingCoverPrompt || props.generatingCover} onClick={props.onRegenerateCoverPrompt}>
+              {props.regeneratingCoverPrompt ? <><span className="spinner" />正在生成</> : <><ArrowClockwise size={14} weight="bold" />重新生成提示词</>}
+            </button>
           </div>
-        </section>
-
-        <div className="agent-system-status"><CheckCircle size={14} weight="fill" /><span>文档与本地目录已同步</span></div>
-      </div>
-      <footer className="agent-panel-footer"><span>本地工作区</span><span>自动保存</span></footer>
+          <label className="command-field">
+            <textarea
+              required
+              rows={5}
+              value={props.coverPrompt}
+              onChange={(event) => props.onCoverPromptChange(event.target.value)}
+              placeholder="点击“重新生成提示词”，或输入主体、构图、色彩和文字留白要求…"
+            />
+            <small>会从当前发布内容提炼视觉焦点，并生成预留文字区的无字封面背景。</small>
+          </label>
+          <label className="command-field">
+            <span>输出画幅</span>
+            <select value={props.coverRatio} onChange={(event) => props.onCoverRatioChange(event.target.value)}>
+              {COVER_RATIOS.map((ratio) => <option value={ratio.value} key={ratio.value}>{ratio.label}</option>)}
+            </select>
+          </label>
+          <button className="agent-action primary" disabled={props.disabled || props.generatingCover || props.regeneratingCoverPrompt} type="submit">
+            {props.generatingCover ? <><span className="spinner" />正在生成封面</> : <><Sparkle size={16} weight="fill" />生成封面</>}
+          </button>
+        </form>
+        {props.covers.length > 0 && (
+          <div className="cover-gallery">
+            {props.covers.map((cover) => (
+              <a href={coverUrl(props.slug, cover.name)} target="_blank" rel="noreferrer" key={cover.name} title="打开原图">
+                <img src={coverUrl(props.slug, cover.name)} alt="已生成的短视频封面" />
+              </a>
+            ))}
+          </div>
+        )}
+      </section>
     </aside>
   );
 }

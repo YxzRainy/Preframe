@@ -9,6 +9,7 @@ import {
   type ProjectStage,
 } from "../../src/services/projectStage";
 import type { DashboardData, DashboardProject } from "../components/dashboard/types";
+import { getProjectAdviceContext, projectAdviceHref } from "../../src/services/projectAdvisor";
 
 async function readProjectJson(projectDir: string): Promise<Record<string, unknown>> {
   try {
@@ -28,14 +29,15 @@ function countShotProgress(metadata: Record<string, unknown>): { completed: numb
 }
 
 function countDocumentProgress(metadata: Record<string, unknown>): { completed: number; total: number } {
-  const total = 10;
   const documentsStatus = metadata.documentsStatus;
   if (documentsStatus && typeof documentsStatus === "object" && !Array.isArray(documentsStatus)) {
     const values = Object.values(documentsStatus) as Array<{ status?: string }>;
+    const total = metadata.workflowVersion === 2 ? 3 : Math.max(values.length, 1);
     return { completed: values.filter((value) => value?.status === "completed").length, total };
   }
   const generated = metadata.generated;
-  return { completed: Array.isArray(generated) ? generated.filter((value) => typeof value === "string").length : 0, total };
+  const completed = Array.isArray(generated) ? generated.filter((value) => typeof value === "string").length : 0;
+  return { completed, total: metadata.workflowVersion === 2 ? 3 : Math.max(completed, 1) };
 }
 
 function resolveStage(metadata: Record<string, unknown>): ProjectStage {
@@ -59,6 +61,9 @@ export async function loadDashboardData(): Promise<DashboardData> {
     const stage = resolveStage(metadata);
     const documents = countDocumentProgress(metadata);
     const shots = countShotProgress(metadata);
+    const projectAdviceContext = await getProjectAdviceContext(project.name).catch(() => undefined);
+    const projectAdvice = projectAdviceContext?.advice;
+    const validatedFacts = projectAdviceContext?.facts;
     return {
       slug: project.name,
       name: typeof metadata.projectName === "string" && metadata.projectName.trim()
@@ -68,19 +73,24 @@ export async function loadDashboardData(): Promise<DashboardData> {
       stage,
       stageLabel: PROJECT_STAGE_LABELS[stage],
       stageUpdatedAt: typeof metadata.stageUpdatedAt === "string" ? metadata.stageUpdatedAt : updatedAt,
-      nextAction: typeof metadata.nextAction === "string" ? metadata.nextAction : undefined,
-      documentCompleted: documents.completed,
-      documentTotal: documents.total,
-      shotCompleted: shots.completed,
-      shotTotal: shots.total,
+      nextAction: projectAdvice?.action || (typeof metadata.nextAction === "string" ? metadata.nextAction : undefined),
+      nextActionReason: projectAdvice?.reason,
+      nextActionLabel: projectAdvice?.ctaLabel,
+      nextActionHref: projectAdvice ? projectAdviceHref(project.name, projectAdvice) : undefined,
+      nextActionPriority: projectAdvice?.priority,
+      documentCompleted: validatedFacts?.documentCompleted ?? documents.completed,
+      documentTotal: validatedFacts?.documentTotal ?? documents.total,
+      shotCompleted: validatedFacts?.shotCompleted ?? shots.completed,
+      shotTotal: validatedFacts?.shotTotal ?? shots.total,
       updatedAt,
+      resumeAvailable: Boolean(metadata.shootingSession && typeof metadata.shootingSession === "object"),
     };
   }));
   items.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
 
   const pipeline: DashboardData["pipeline"] = {
     idea: 0, planning: 0, ready_to_shoot: 0, shooting: 0,
-    editing: 0, ready_to_publish: 0, published: 0, archived: 0,
+    editing: 0, ready_to_publish: 0, archived: 0,
   };
   for (const item of items) pipeline[item.stage] += 1;
 

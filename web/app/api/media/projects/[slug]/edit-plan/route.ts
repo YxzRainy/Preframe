@@ -14,6 +14,9 @@ export async function POST(_request: Request, { params }: { params: Promise<{ sl
       success: true,
       jsonPath: result.jsonPath,
       markdownPath: result.markdownPath,
+      csvPath: result.csvPath,
+      srtPath: result.srtPath,
+      missingReportPath: result.missingReportPath,
       plan: result.plan,
     });
   } catch (error) {

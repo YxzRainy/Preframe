@@ -26,6 +26,11 @@ interface EditPlanSummary {
   shotsWithAsset: number;
   missingShots: number;
 }
+interface DeliveryFiles {
+  csvPath?: string;
+  srtPath?: string;
+  missingReportPath?: string;
+}
 
 // =========================================================================
 // 素材监听目录配置面板（全局一次性配置）
@@ -207,6 +212,7 @@ export function ShotMediaBar({ slug, batchSuggestions, onLinksRefresh }: ShotMed
   const [error, setError] = useState("");
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [editPlan, setEditPlan] = useState<EditPlanSummary | null>(null);
+  const [deliveryFiles, setDeliveryFiles] = useState<DeliveryFiles | null>(null);
 
   async function handleScan() {
     try {
@@ -287,10 +293,11 @@ export function ShotMediaBar({ slug, batchSuggestions, onLinksRefresh }: ShotMed
       setPlanBusy(true);
       setError("");
       const res = await fetch(`/api/media/projects/${encodeURIComponent(slug)}/edit-plan`, { method: "POST" });
-      const data = await readJsonResponse<{ plan?: EditPlanSummary; jsonPath?: string; markdownPath?: string; error?: string }>(res);
+      const data = await readJsonResponse<{ plan?: EditPlanSummary; csvPath?: string; srtPath?: string; missingReportPath?: string; error?: string }>(res);
       if (!res.ok) throw new Error(data.error || "剪辑清单生成失败。");
       setEditPlan(data.plan || null);
-      setNotice(`剪辑准备清单已生成：${data.plan?.totalShots ?? 0} 镜头，缺失 ${data.plan?.missingShots ?? 0}。`);
+      setDeliveryFiles({ csvPath: data.csvPath, srtPath: data.srtPath, missingReportPath: data.missingReportPath });
+      setNotice(`剪辑交付包已生成：${data.plan?.totalShots ?? 0} 镜头，缺失 ${data.plan?.missingShots ?? 0}。`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "剪辑清单生成失败。");
     } finally {
@@ -310,7 +317,7 @@ export function ShotMediaBar({ slug, batchSuggestions, onLinksRefresh }: ShotMed
           <summary><CaretDown size={14} weight="bold" /> 更多素材操作</summary>
           <div>
             <button type="button" disabled={shotMatching} onClick={handleShotMatch}>{shotMatching ? "匹配中…" : <><Crosshair size={15} weight="bold" />重新匹配镜头</>}</button>
-            <button type="button" disabled={planBusy} onClick={handleEditPlan}>{planBusy ? "生成中…" : <><ListChecks size={15} weight="fill" />生成剪辑清单</>}</button>
+            <button type="button" disabled={planBusy} onClick={handleEditPlan}>{planBusy ? "生成中…" : <><ListChecks size={15} weight="fill" />生成剪辑交付包</>}</button>
             <button type="button" onClick={() => setPrefsOpen((v) => !v)}><GearSix size={15} weight="fill" />{prefsOpen ? "收起目录配置" : "设置监听目录"}</button>
           </div>
         </details>
@@ -325,6 +332,7 @@ export function ShotMediaBar({ slug, batchSuggestions, onLinksRefresh }: ShotMed
         <div className="media-edit-plan-summary">
           剪辑清单：{editPlan.totalShots} 镜头 · 已有素材 {editPlan.shotsWithAsset} · 缺失 {editPlan.missingShots}
           <span className="media-plan-hint">（已写入项目 editing/ 目录）</span>
+          {deliveryFiles && <div className="media-delivery-files"><span>CSV 时间线</span><span>SRT 字幕</span><span>缺失报告</span></div>}
         </div>
       )}
 

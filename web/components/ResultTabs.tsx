@@ -69,8 +69,9 @@ export function ResultTabs({
   // 未生成状态
   if (!hasAnyFile && !loading) {
     const onboardingDescriptions = [
-      "明确目标与内容方向", "拆出核心观点与结构", "生成可直接拍摄的表达", "安排镜头与剪辑节奏", "整理场景、道具和设备",
-      "优化搜索与点击率", "指导 AI 绘制封面素材", "规避平台敏感词风险", "打印或在手机端对照拍摄", "评论区与粉丝互动策略"
+      "锁定目标用户、核心观点、时长和风险边界",
+      "一份稿同时服务提词、拍摄、字幕和剪辑",
+      "收束最终发布卡，并在发布后回收真实数据",
     ];
     return (
       <div className="onboarding-panel">
@@ -78,7 +79,7 @@ export function ResultTabs({
           <div className="hero-content">
             <span className="hero-badge">短视频前期策划工作台</span>
             <h1>从一个选题，到一套可以直接执行的内容方案</h1>
-            <p>生成脚本、分镜、拍摄清单、内容质检和发布承接</p>
+            <p>生成三份一致、可拍、可发布、可复盘的核心工作稿</p>
             <div className="hero-actions">
               {onCreateProject && (
                 <button className="primary-button hero-btn" type="button" onClick={onCreateProject}>创建内容项目</button>
@@ -94,7 +95,7 @@ export function ResultTabs({
         </header>
 
         <section className="onboarding-modules">
-          <h3>完整前期策划包</h3>
+          <h3>三份核心工作稿</h3>
           <div className="onboarding-grid">
             {PROJECT_DOCUMENT_DEFINITIONS.map((def, i) => (
               <div className="onboarding-card" key={def.key}>

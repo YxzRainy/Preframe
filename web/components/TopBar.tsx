@@ -2,10 +2,10 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
-import { List, MoonStars, Sun } from "@phosphor-icons/react";
+import { List, MagnifyingGlass, MoonStars, Sun } from "@phosphor-icons/react";
 import { StatusBadge } from "./StatusBadge";
 import { Modal } from "./Modal";
-import { isPrimaryProjectDocument } from "../../src/utils/documentDefinitions";
+import { isPrimaryProjectDocument, PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinitions";
 import { readJsonResponse } from "../lib/readJsonResponse";
 
 export interface CreatorProfile {
@@ -39,24 +39,24 @@ function fallbackProjectName(slug: string): string {
 }
 
 function routeState(pathname: string): CurrentProjectState {
-  if (pathname === "/") return { title: "创作者工作台", status: "工作台", tone: "muted" };
-  if (pathname === "/projects") return { title: "历史项目", status: "项目库", tone: "muted" };
+  if (pathname === "/") return { title: "", status: "工作台", tone: "muted" };
+  if (pathname === "/projects") return { title: "", status: "项目库", tone: "muted" };
   if (pathname.startsWith("/projects/")) {
     const slug = pathname.split("/").filter(Boolean).at(-1) || "";
     return { title: fallbackProjectName(slug), status: "正在打开项目", tone: "working" };
   }
-  return { title: "片策工作台", status: "本地运行", tone: "muted" };
+  return { title: "", status: "本地运行", tone: "muted" };
 }
 
-function completedStatus(fileCount: number): string {
-  if (fileCount === 10) return "已打开项目 · 10/10 已完成";
-  return `已打开项目 · ${fileCount}/10 可用`;
+function completedStatus(fileCount: number, total: number = PROJECT_DOCUMENT_DEFINITIONS.length): string {
+  if (fileCount === total) return `已打开项目 · ${total}/${total} 已完成`;
+  return `已打开项目 · ${fileCount}/${total} 可用`;
 }
 
-function generatedStatus(fileCount?: number): string {
+function generatedStatus(fileCount?: number, total: number = PROJECT_DOCUMENT_DEFINITIONS.length): string {
   if (!fileCount) return "尚无可用文档";
-  if (fileCount === 10) return "策划包已完成 · 10/10 已完成";
-  return `${fileCount}/10 可用，部分文档生成失败`;
+  if (fileCount === total) return `核心工作稿已完成 · ${total}/${total}`;
+  return `${fileCount}/${total} 可用，部分文档生成失败`;
 }
 
 interface TopBarProps {
@@ -115,8 +115,9 @@ export function TopBar({ initialProfile }: TopBarProps) {
       .then((project) => {
         if (!active) return;
         const statuses = project.metadata?.documentsStatus && typeof project.metadata.documentsStatus === "object" ? project.metadata.documentsStatus as Record<string, { status?: string }> : {};
-        const fileCount = Object.values(statuses).filter((item) => item.status === "completed").length;
-        setCurrentProject({ title: project.name || project.slug, status: completedStatus(fileCount), tone: fileCount === 10 ? "ready" : "warning" });
+        const total = project.metadata?.workflowVersion === 2 ? PROJECT_DOCUMENT_DEFINITIONS.length : Math.max(Object.keys(statuses).length, project.files?.filter((file) => isPrimaryProjectDocument(file.name)).length || 1);
+        const fileCount = Object.values(statuses).filter((item) => item.status === "completed").length || project.files?.filter((file) => isPrimaryProjectDocument(file.name)).length || 0;
+        setCurrentProject({ title: project.name || project.slug, status: completedStatus(fileCount, total), tone: fileCount === total ? "ready" : "warning" });
       })
       .catch(() => {
         if (active) setCurrentProject({ title: fallbackProjectName(slug), status: "项目读取失败", tone: "warning" });
@@ -149,9 +150,12 @@ export function TopBar({ initialProfile }: TopBarProps) {
         <strong>片策</strong>
       </div>
       <div className="topbar-page-title">
-        <h2>{currentProject.title}</h2>
+        {currentProject.title && <h2>{currentProject.title}</h2>}
       </div>
       <div className="topbar-actions">
+        <button type="button" className="topbar-search-trigger" aria-label="搜索项目与文档" onClick={() => window.dispatchEvent(new Event("preframe-open-command-palette"))}>
+          <MagnifyingGlass size={16} weight="bold" /><span>搜索</span><kbd>⌘K</kbd>
+        </button>
         <button
           type="button"
           className="theme-toggle"

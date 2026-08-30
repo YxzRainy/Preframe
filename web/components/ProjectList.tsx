@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { ArrowCounterClockwise, ArrowUpRight, DownloadSimple, FolderOpen, Plus, Trash, UploadSimple } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, ArrowUpRight, DotsThreeVertical, DownloadSimple, FolderOpen, Plus, Trash } from "@phosphor-icons/react";
 import { Modal } from "./Modal";
 import { readJsonResponse } from "../lib/readJsonResponse";
 
@@ -33,7 +33,7 @@ export function ProjectList() {
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [deleting, setDeleting] = useState(false);
-  const [filter, setFilter] = useState<"all" | "active" | "published">("all");
+  const [filter, setFilter] = useState<"all" | "active" | "complete">("all");
   const [trashOpen, setTrashOpen] = useState(false);
   const [trashProjects, setTrashProjects] = useState<TrashProject[]>([]);
   const [trashBusy, setTrashBusy] = useState("");
@@ -131,35 +131,36 @@ export function ProjectList() {
   const filterTabs = [
     { id: "all" as const, label: "全部" },
     { id: "active" as const, label: "进行中" },
-    { id: "published" as const, label: "已发布" },
+    { id: "complete" as const, label: "策划完成" },
   ];
   const filteredProjects = projects.filter((p) => {
     if (filter === "all") return true;
-    if (filter === "published") return p.status === "complete";
+    if (filter === "complete") return p.status === "complete";
     return p.status !== "complete";
   });
+  const showFilters = new Set(projects.map((project) => project.status)).size > 1;
 
   return (
     <>
       <div className="project-library-toolbar">
-        <div className="project-filters">
+        {showFilters && <div className="project-filters" aria-label="项目状态筛选">
           {filterTabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={`project-filter-tab ${filter === tab.id ? "active" : ""}`}
-            onClick={() => setFilter(tab.id)}
-          >
-            {tab.label}
-            <span className="project-filter-count">
-              {tab.id === "all" ? projects.length : tab.id === "published" ? projects.filter((p) => p.status === "complete").length : projects.filter((p) => p.status !== "complete").length}
-            </span>
-          </button>
+            <button
+              key={tab.id}
+              type="button"
+              className={`project-filter-tab ${filter === tab.id ? "active" : ""}`}
+              onClick={() => setFilter(tab.id)}
+            >
+              {tab.label}
+              <span className="project-filter-count">
+                {tab.id === "all" ? projects.length : tab.id === "complete" ? projects.filter((p) => p.status === "complete").length : projects.filter((p) => p.status !== "complete").length}
+              </span>
+            </button>
           ))}
-        </div>
+        </div>}
         <div className="project-transfer-actions">
-          <button type="button" className="secondary-button" onClick={() => importInput.current?.click()} disabled={transferBusy}><UploadSimple size={16} />{transferBusy ? "导入中" : "导入项目"}</button>
-          <button type="button" className="secondary-button" onClick={() => void openTrash()}><Trash size={16} />回收站</button>
+          <button type="button" className="project-utility-link" onClick={() => importInput.current?.click()} disabled={transferBusy}>{transferBusy ? "导入中…" : "导入"}</button>
+          <button type="button" className="project-utility-link" onClick={() => void openTrash()}>回收站</button>
           <input ref={importInput} type="file" accept="application/json,.json,.preframe-project.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void importProject(file); }} />
         </div>
       </div>
@@ -174,30 +175,35 @@ export function ProjectList() {
         </div>
       ) : (
       <div className="project-grid">
-        {filteredProjects.map((project, index) => (
+        {filteredProjects.map((project) => (
         <article className="project-card" key={project.slug}>
-          <div className="project-card-top">
-            <span className="project-sequence">项目 {String(index + 1).padStart(3, "0")}</span>
-            <div className="project-card-actions">
-              <span className="project-ready"><i /> {project.status === "complete" ? "10/10 可用" : project.status === "partial" ? `${project.completedCount}/10 可用` : "待重试"}</span>
-              <a className="project-delete-button" href={`/api/projects/${encodeURIComponent(project.slug)}/export`} download title="导出项目" aria-label={`导出项目 ${project.name}`}><DownloadSimple size={15} /></a>
-              <button
-                className="project-delete-button"
-                type="button"
-                aria-label={`删除项目 ${project.name}`}
-                onClick={() => { setDeleteTarget(project); setDeleteError(""); }}
-              >
-                <Trash size={15} />
-              </button>
-            </div>
-          </div>
           <Link className="project-card-link" href={`/projects/${encodeURIComponent(project.slug)}`}>
-            <div className="project-card-icon"><FolderOpen size={24} weight="fill" /><small>{project.platform.slice(0, 1)}</small></div>
-            <h2>{project.name}</h2>
-            <div className="project-card-tags"><span>{project.platform}</span><span>{project.contentSubject}</span>{project.contentDomain !== "未记录" && <span>{project.contentDomain}</span>}</div>
-            <div className="project-card-pipeline">{Array.from({ length: Math.min(project.completedCount, 8) }, (_, itemIndex) => <i key={itemIndex} />)}</div>
-            <div className="project-card-footer"><div><small>最近更新</small><time>{new Date(project.generatedAt).toLocaleString("zh-CN")}</time></div><div><small>可用文档</small><strong>{project.completedCount}</strong></div><span className="card-arrow"><ArrowUpRight size={18} weight="bold" /></span></div>
+            <div className="project-card-main">
+              <h2>{project.name}</h2>
+              <p>{[project.platform, project.contentSubject, project.contentDomain !== "未记录" ? project.contentDomain : ""].filter(Boolean).join(" · ")}</p>
+            </div>
+            <div className="project-card-meta">
+              <span>{project.status === "failed" ? "需要处理" : `${project.completedCount} 个文档`}</span>
+              <time dateTime={project.generatedAt}>{new Date(project.generatedAt).toLocaleDateString("zh-CN")}</time>
+            </div>
           </Link>
+          <div className="project-card-actions">
+            <Link className="card-arrow" href={`/projects/${encodeURIComponent(project.slug)}`} aria-label={`打开${project.name}`}>
+              <ArrowUpRight size={17} weight="bold" />
+            </Link>
+            <details className="project-card-menu">
+              <summary aria-label={`管理项目 ${project.name}`}><DotsThreeVertical size={18} weight="bold" /></summary>
+              <div>
+                <a href={`/api/projects/${encodeURIComponent(project.slug)}/export`} download><DownloadSimple size={14} />导出项目</a>
+                <button
+                  type="button"
+                  onClick={() => { setDeleteTarget(project); setDeleteError(""); }}
+                >
+                  <Trash size={14} />移入回收站
+                </button>
+              </div>
+            </details>
+          </div>
         </article>
       ))}
       </div>

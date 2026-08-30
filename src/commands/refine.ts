@@ -11,9 +11,9 @@ import { callModel } from "../services/modelClient.js";
 import { listProjects } from "../services/projectManager.js";
 
 const REFINABLE = {
-  script: { label: "口播脚本", filenames: ["03_口播脚本.md", "02_口播脚本.md"] },
-  storyboard: { label: "分镜与剪辑节奏", filenames: ["04_分镜与剪辑节奏.md", "03_分镜草案.md"] },
-  titles: { label: "封面标题与发布文案", filenames: ["06_封面标题与发布文案.md", "05_封面标题.md"] },
+  brief: { label: "创作简报", filenames: ["01_创作简报.md", "01_项目概览.md", "01_选题拆解.md"] },
+  execution: { label: "拍摄执行稿", filenames: ["02_拍摄执行稿.md", "09_成片执行稿.md", "03_口播脚本.md", "02_口播脚本.md"] },
+  publish: { label: "发布与复盘", filenames: ["03_发布与复盘.md", "06_封面标题与发布文案.md", "05_封面标题.md"] },
 } as const;
 
 type RefineChoice = keyof typeof REFINABLE | "all";
@@ -56,10 +56,10 @@ export async function runRefine(): Promise<void> {
       name: "target",
       message: "需要修改哪个文件？",
       choices: [
-        { name: "口播脚本", value: "script" },
-        { name: "分镜与剪辑节奏", value: "storyboard" },
-        { name: "封面标题与发布文案", value: "titles" },
-        { name: "全部（以上三个文件）", value: "all" },
+        { name: "创作简报", value: "brief" },
+        { name: "拍摄执行稿", value: "execution" },
+        { name: "发布与复盘", value: "publish" },
+        { name: "全部三份核心工作稿", value: "all" },
       ],
     },
     {

@@ -85,9 +85,12 @@ export async function readProjects(): Promise<ProjectSummary[]> {
     const profile = resolveContentProfile(metadata);
     const metadataStatus: ProjectSummary["status"] | undefined = metadata.status === "complete" || metadata.status === "partial" || metadata.status === "failed" ? metadata.status : undefined;
     const generated = Array.isArray(metadata.generated) ? metadata.generated.filter((value) => typeof value === "string").length : 0;
-    const fileCount = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).length;
-    const completedCount = generated || (metadataStatus === "complete" ? Math.min(fileCount, PROJECT_DOCUMENT_DEFINITIONS.length) : 0);
-    const status: ProjectSummary["status"] = metadataStatus === "complete" && completedCount === PROJECT_DOCUMENT_DEFINITIONS.length
+    const markdownNames = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".md")).map((entry) => entry.name);
+    const fileCount = markdownNames.length;
+    const currentWorkflow = metadata.workflowVersion === 2 || markdownNames.some((name) => PROJECT_DOCUMENT_DEFINITIONS.some((definition) => definition.filename === name));
+    const expectedTotal = currentWorkflow ? PROJECT_DOCUMENT_DEFINITIONS.length : Math.max(generated, fileCount, 1);
+    const completedCount = generated || (metadataStatus === "complete" ? Math.min(fileCount, expectedTotal) : 0);
+    const status: ProjectSummary["status"] = metadataStatus === "complete" && completedCount >= expectedTotal
       ? "complete"
       : completedCount > 0
         ? "partial"
@@ -141,11 +144,27 @@ export async function readProject(slug: string): Promise<ProjectDetail> {
     targetAudience: typeof metadata.targetAudience === "string" ? metadata.targetAudience : "目标用户",
     extraRequirements: typeof metadata.extraRequirements === "string" ? metadata.extraRequirements : "",
   };
+  const currentWorkflow = metadata.workflowVersion === 2 || rawFiles.some((file) => PROJECT_DOCUMENT_DEFINITIONS.some((definition) => definition.filename === file.name));
+  if (!currentWorkflow) {
+    return {
+      slug,
+      name: typeof metadata.projectName === "string" && metadata.projectName.trim()
+        ? metadata.projectName
+        : typeof metadata.topic === "string" ? metadata.topic : slug,
+      metadata,
+      files: rawFiles,
+      covers,
+    };
+  }
+
   const canonicalFiles = rawFiles.filter((file) => PROJECT_DOCUMENT_DEFINITIONS.some((definition) => definition.filename === file.name));
+  const brief = metadata.projectBrief && typeof metadata.projectBrief === "object" && !Array.isArray(metadata.projectBrief)
+    ? metadata.projectBrief as Parameters<typeof validateDocument>[4]
+    : undefined;
   const files: Array<ContentFile & { status: "completed" | "failed"; validationErrors: string[] }> = rawFiles.map((file) => {
     const definition = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.filename === file.name);
     if (!definition) return { ...file, status: "completed" as const, validationErrors: [] };
-    const errors = validateDocument(file.content, definition, input, canonicalFiles.filter((other) => other.name !== file.name));
+    const errors = validateDocument(file.content, definition, input, canonicalFiles.filter((other) => other.name !== file.name), brief, { allowRecordedResults: true });
     return { ...file, status: errors.length ? "failed" as const : "completed" as const, validationErrors: errors };
   });
   const previousDocumentsStatus = metadata.documentsStatus && typeof metadata.documentsStatus === "object"
@@ -171,7 +190,7 @@ export async function readProject(slug: string): Promise<ProjectDetail> {
   metadata.documentsStatus = documentsStatus;
   metadata.generated = Object.values(documentsStatus).filter((item) => item.generated).map((item) => item.id);
   metadata.failed = Object.values(documentsStatus).filter((item) => item.failed).map((item) => item.id);
-  metadata.status = completedCount === 10 ? "complete" : completedCount ? "partial" : "failed";
+  metadata.status = completedCount === PROJECT_DOCUMENT_DEFINITIONS.length ? "complete" : completedCount ? "partial" : "failed";
   return {
     slug,
     name: typeof metadata.projectName === "string" && metadata.projectName.trim()

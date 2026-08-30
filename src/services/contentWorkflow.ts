@@ -2,13 +2,7 @@ import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import type { GenerateInput } from "../prompts/generatePrompt.js";
-import {
-  executionContext,
-  executionDocumentInstructions,
-  productionContext,
-  qualityReviewContext,
-  QUALITY_REVIEW_CONTEXT_FILES,
-} from "../prompts/enhancePrompt.js";
+import { documentContext } from "../prompts/enhancePrompt.js";
 import { CORE_PROJECT_DOCUMENT_DEFINITIONS, PROJECT_DOCUMENT_DEFINITIONS } from "../utils/documentDefinitions.js";
 import {
   buildRefinePrompt,
@@ -50,6 +44,8 @@ import {
 } from "./documentGeneration.js";
 import { syncProjectDerivedState } from "./projectLifecycle.js";
 import { archiveDocumentVersion } from "./documentVersionStore.js";
+import { combineCreatorPrompts, creatorLearningPrompt } from "./creatorLearningStore.js";
+import { contentAssetPromptForTopic } from "./contentAssetStore.js";
 
 export interface ContentFile {
   name: string;
@@ -203,7 +199,7 @@ function documentProgress(overrides: Partial<Record<string, { status: Generation
   });
 }
 
-/** CLI 与 Web 共用的完整生成流程。 */
+/** CLI 与 Web 共用的三文档生成流程。 */
 export async function generateProject(input: GenerateInput, options: GenerateProjectOptions = {}): Promise<GenerateResult> {
   const jobId = options.jobId || `local_${Date.now()}`;
   let tempDir = "";
@@ -215,152 +211,78 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
   const modelCalls: GenerationModelCallRecord[] = [];
   const recordModelCall = (record: GenerationModelCallRecord) => {
     modelCalls.push(record);
-    console.info(`[generation:${jobId}] model ${record.fileName} attempt=${record.attempt} status=${record.status} duration=${record.durationMs}ms kind=${record.failureKind || "none"} promptChars=${record.promptChars} totalTokens=${record.totalTokens ?? "unknown"}`);
     options.onModelCall?.(record);
   };
   const model = await loadModelConfig().then((config) => config.model).catch(() => undefined);
-  const accountMemoryValue = await getAccountMemory().catch((error) => {
-    console.warn(`[generation:${jobId}] 账号记忆读取失败，继续按空记忆生成：${error instanceof Error ? error.message : String(error)}`);
-    return { ...EMPTY_ACCOUNT_MEMORY };
-  });
+  const accountMemoryValue = await getAccountMemory().catch(() => ({ ...EMPTY_ACCOUNT_MEMORY }));
   const accountMemoryUsed = accountMemoryHasContent(accountMemoryValue);
-  const accountMemoryPrompt = accountMemoryUsed ? sanitizeAccountMemoryForPrompt(accountMemoryValue) : "";
-  const accountMemoryMetadata = {
-    used: accountMemoryUsed,
-    snapshot: accountMemorySnapshot(accountMemoryValue),
-  };
+  const accountMemoryPrompt = combineCreatorPrompts(
+    accountMemoryUsed ? sanitizeAccountMemoryForPrompt(accountMemoryValue) : "",
+    await creatorLearningPrompt().catch(() => ""),
+  );
+  const accountMemoryMetadata = { used: accountMemoryUsed, snapshot: accountMemorySnapshot(accountMemoryValue) };
+  const progressState: Partial<Record<string, { status: GenerationDocumentProgressStatus; message?: string }>> = {};
 
   try {
     assertNotCancelled(options);
-    options.onStatus?.({ status: "creating", currentDocument: "统一项目简报", progress: 0, generationProgress: documentProgress() });
+    options.onStatus?.({ status: "creating", currentDocument: "统一创作约束", progress: 0, generationProgress: documentProgress() });
     tempDir = await withStage("write", () => timed(jobId, "创建项目目录耗时", options, () => createTempProjectDirectory(jobId)));
     options.onTempDir?.(tempDir);
-
-    const brief = await withStage("model", () => timed(jobId, "projectBrief 生成耗时", options, async () => {
-      try {
-        return await createProjectBrief(input, accountMemoryPrompt, taskSignal, recordModelCall);
-      } catch (error) {
-        if (options.signal?.aborted || options.isCancelled?.()) throw new GenerationCancelledError();
-        throw error;
-      }
-    }));
-    assertNotCancelled(options);
-
-    const progressState = new Map<string, { status: GenerationDocumentProgressStatus; message?: string }>();
-    const results = new Map<string, GeneratedDocumentResult>();
-    const report = (definition: (typeof PROJECT_DOCUMENT_DEFINITIONS)[number], state: DocumentState, errors: string[] = []) => {
-      progressState.set(definition.filename, { status: state, message: errors.join("；") || undefined });
-      const completed = [...progressState.values()].filter((item) => item.status === "completed").length;
-      options.onStatus?.({
-        status: definition.number === "09" ? "generatingExecution" : definition.number === "10" ? "generatingPublishCopy" : "generatingCore",
-        currentDocument: definition.filename,
-        progress: completed * 10,
-        generationProgress: documentProgress(Object.fromEntries(progressState)),
-      });
+    const assetReferenceContext = await contentAssetPromptForTopic([input.topic, input.contentDomain, input.platform].filter(Boolean).join(" ")).catch(() => "");
+    const brief = await withStage("model", () => createProjectBrief(input, accountMemoryPrompt, taskSignal, recordModelCall, assetReferenceContext));
+    const resolvedInput: GenerateInput = {
+      ...input,
+      contentSubject: brief.contentSubject,
+      contentDomain: brief.contentDomain,
+      platform: brief.platform,
+      style: brief.style,
+      targetAudience: brief.targetAudience,
     };
-    const generateDefinition = async (definition: (typeof PROJECT_DOCUMENT_DEFINITIONS)[number], context = "") => {
+    const results = new Map<string, GeneratedDocumentResult>();
+    const accepted: Array<{ name: string; content: string }> = [];
+
+    for (let index = 0; index < PROJECT_DOCUMENT_DEFINITIONS.length; index += 1) {
       await options.waitIfPaused?.();
       assertNotCancelled(options);
-      const accepted = [...results.values()].filter((result) => result.content).map((result) => ({ name: result.definition.filename, content: result.content as string }));
-      let result: GeneratedDocumentResult;
-      try {
-        result = await generateValidatedDocument({
-          definition, input, brief, context, accountMemoryPrompt, acceptedDocuments: accepted, signal: taskSignal,
-          onState: (state, errors) => report(definition, state, errors),
-          onModelCall: recordModelCall,
-        });
-      } catch (error) {
-        if (options.signal?.aborted || options.isCancelled?.()) throw new GenerationCancelledError();
-        throw error;
-      }
+      const definition = PROJECT_DOCUMENT_DEFINITIONS[index];
+      const context = documentContext(accepted, definition.number);
+      options.onStatus?.({
+        status: definition.number === "01" ? "generatingCore" : definition.number === "02" ? "generatingExecution" : "generatingPublishCopy",
+        currentDocument: definition.filename,
+        progress: Math.round((index / PROJECT_DOCUMENT_DEFINITIONS.length) * 100),
+        generationProgress: documentProgress(progressState),
+      });
+      const result = await generateValidatedDocument({
+        definition,
+        input: resolvedInput,
+        brief,
+        context,
+        accountMemoryPrompt,
+        acceptedDocuments: accepted,
+        signal: taskSignal,
+        onModelCall: recordModelCall,
+        onState: (state, errors = []) => {
+          progressState[definition.filename] = {
+            status: state === "completed" ? "completed" : state === "failed" ? "failed" : state,
+            message: errors[0],
+          };
+          options.onStatus?.({
+            status: definition.number === "01" ? "generatingCore" : definition.number === "02" ? "generatingExecution" : "generatingPublishCopy",
+            currentDocument: definition.filename,
+            progress: Math.round((index / PROJECT_DOCUMENT_DEFINITIONS.length) * 100),
+            generationProgress: documentProgress(progressState),
+          });
+        },
+      });
       results.set(definition.number, result);
-      if (result.content) await writeMarkdown(path.join(tempDir, result.definition.filename), result.content);
-      report(definition, result.content ? "completed" : "failed", result.validationErrors);
-    };
-
-    const generateCoreBatch = async (queue: Array<(typeof CORE_PROJECT_DOCUMENT_DEFINITIONS)[number]>) => {
-      let queueIndex = 0;
-      await Promise.all(Array.from({ length: Math.min(3, Math.max(1, queue.length)) }, async () => {
-        while (queueIndex < queue.length) {
-          const definition = queue[queueIndex++];
-          const available = [...results.values()]
-            .filter((result) => result.content)
-            .map((result) => ({ name: result.definition.filename, content: result.content as string }));
-          const context = definition.number === "08"
-            ? qualityReviewContext(available)
-            : definition.number === "04" || definition.number === "05"
-              ? productionContext(available)
-              : "";
-          if (definition.number === "08") {
-            const missing = QUALITY_REVIEW_CONTEXT_FILES.filter((name) => !available.some((document) => document.name === name));
-            if (missing.length) {
-              const failed: GeneratedDocumentResult = { definition, repaired: false, validationErrors: [`依赖文档未通过校验：${missing.join("、")}`] };
-              results.set(definition.number, failed);
-              report(definition, "failed", failed.validationErrors);
-              continue;
-            }
-          }
-          await generateDefinition(definition, context);
-        }
-      }));
-    };
-
-    // 先生成质检和执行文档依赖的三份主文档；第二阶段仍保持三并发，
-    // 但 04/05 可继承口播稿，08 也能审查真实内容，核心阶段仍是三轮请求。
-    const firstPhaseNumbers = new Set(["01", "03", "06"]);
-    await generateCoreBatch(CORE_PROJECT_DOCUMENT_DEFINITIONS.filter((definition) => firstPhaseNumbers.has(definition.number)));
-    const qualityDefinition = CORE_PROJECT_DOCUMENT_DEFINITIONS.find((definition) => definition.number === "08")!;
-    await generateCoreBatch([
-      qualityDefinition,
-      ...CORE_PROJECT_DOCUMENT_DEFINITIONS.filter((definition) => !firstPhaseNumbers.has(definition.number) && definition.number !== "08"),
-    ]);
-    assertNotCancelled(options);
-
-    const acceptedCore = [...results.values()].filter((result) => result.content).map((result) => ({ name: result.definition.filename, content: result.content as string }));
-    for (const result of [...results.values()].filter((item) => item.content)) {
-      const others = acceptedCore.filter((item) => item.name !== result.definition.filename);
-      const duplicateErrors = validateDocument(result.content as string, result.definition, input, others).filter((error) => error.includes("高度重复"));
-      if (duplicateErrors.length) {
-        results.set(result.definition.number, { ...result, content: undefined, validationErrors: duplicateErrors });
-        await rm(path.join(tempDir, result.definition.filename), { force: true });
-        report(result.definition, "failed", duplicateErrors);
-      }
+      progressState[definition.filename] = { status: result.content ? "completed" : "failed", message: result.validationErrors[0] };
+      if (!result.content) break; // 下游不能在上游真源缺失时继续生成。
+      accepted.push({ name: definition.filename, content: result.content });
     }
 
-    const qualityResult = results.get("08");
-    if (qualityResult?.content) {
-      const availableNames = new Set([...results.values()].filter((result) => result.content).map((result) => result.definition.filename));
-      const missing = QUALITY_REVIEW_CONTEXT_FILES.filter((name) => !availableNames.has(name));
-      if (missing.length) {
-        const errors = [`依赖文档未通过校验：${missing.join("、")}`];
-        results.set("08", { ...qualityResult, content: undefined, validationErrors: errors });
-        await rm(path.join(tempDir, qualityResult.definition.filename), { force: true });
-        report(qualityResult.definition, "failed", errors);
-      }
-    }
-
-    const validDocuments = () => [...results.values()].filter((result) => result.content).map((result) => ({ name: result.definition.filename, content: result.content as string }));
-    for (const number of ["09", "10"] as const) {
-      const definition = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === number)!;
-      const requiredNames = number === "09"
-        ? ["01_项目概览.md", "03_口播脚本.md", "04_分镜与剪辑节奏.md", "05_拍摄清单.md", "08_内容质检报告.md"]
-        : ["01_项目概览.md", "03_口播脚本.md", "06_封面标题与发布文案.md", "08_内容质检报告.md", "09_成片执行稿.md"];
-      const available = validDocuments();
-      const missing = requiredNames.filter((name) => !available.some((document) => document.name === name));
-      if (missing.length) {
-        const failed: GeneratedDocumentResult = { definition, repaired: false, validationErrors: [`依赖文档未通过校验：${missing.join("、")}`] };
-        results.set(number, failed);
-        report(definition, "failed", failed.validationErrors);
-      } else {
-        await generateDefinition(definition, `${executionDocumentInstructions(number)}\n\n${executionContext(available, number)}`);
-      }
-    }
-
-    assertNotCancelled(options);
-    const orderedResults = PROJECT_DOCUMENT_DEFINITIONS.map((definition) => results.get(definition.number) || ({ definition, repaired: false, validationErrors: ["未生成"] }));
+    const orderedResults = PROJECT_DOCUMENT_DEFINITIONS.map((definition) => results.get(definition.number) || ({ definition, repaired: false, validationErrors: ["上游文档未通过校验"] }));
     const statusRecords = orderedResults.map(statusRecord);
     const files: ContentFile[] = [];
-    options.onStatus?.({ status: "writing", currentDocument: "写入已通过校验的文档", progress: statusRecords.filter((item) => item.generated).length * 10, generationProgress: documentProgress(Object.fromEntries(progressState)) });
     await withStage("write", async () => {
       for (const result of orderedResults) {
         if (!result.content) continue;
@@ -370,47 +292,45 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
       const finishedAt = new Date().toISOString();
       const durationMs = Math.max(0, Date.parse(finishedAt) - Date.parse(generationStartedAt));
       const complete = files.length === PROJECT_DOCUMENT_DEFINITIONS.length;
-      const deadlineReached = taskSignal.aborted && taskSignal.reason instanceof DOMException && taskSignal.reason.name === "TimeoutError";
-      const status = complete ? "complete" : files.length ? "partial" : "failed";
       await writeJson(path.join(tempDir, "project.json"), {
-        ...projectMetadata(input, projectName, { startedAt: generationStartedAt, finishedAt, durationMs }, model, accountMemoryMetadata),
+        ...projectMetadata(resolvedInput, projectName, { startedAt: generationStartedAt, finishedAt, durationMs }, model, accountMemoryMetadata),
+        workflowVersion: 2,
+        workflowModel: "three-document-single-source",
         projectBrief: brief,
-        status,
+        status: complete ? "complete" : files.length ? "partial" : "failed",
+        qualityGate: {
+          mode: "automatic-repair",
+          passed: complete,
+          repairedDocuments: statusRecords.filter((item) => item.repaired).map((item) => item.id),
+          unresolved: Object.fromEntries(statusRecords.filter((item) => item.validationErrors.length).map((item) => [item.id, item.validationErrors])),
+        },
         documentsStatus: Object.fromEntries(statusRecords.map((item) => [item.id, item])),
         generated: statusRecords.filter((item) => item.generated).map((item) => item.id),
         repaired: statusRecords.filter((item) => item.repaired).map((item) => item.id),
         failed: statusRecords.filter((item) => item.failed).map((item) => item.id),
         validationErrors: Object.fromEntries(statusRecords.filter((item) => item.validationErrors.length).map((item) => [item.id, item.validationErrors])),
-        fallbackUsed: statusRecords.some((item) => item.documentStatus === "fallback"),
-        fallbackDocuments: statusRecords.filter((item) => item.documentStatus === "fallback").map((item) => item.id),
+        fallbackUsed: false,
+        fallbackDocuments: [],
         generationDeadlineMs: deadlineMs,
-        generationDeadlineReached: deadlineReached,
+        generationDeadlineReached: taskSignal.aborted && taskSignal.reason instanceof DOMException && taskSignal.reason.name === "TimeoutError",
         modelCalls,
       });
     });
+
     const projectDir = await withStage("write", () => finalizeTempProjectDirectory(tempDir, projectName));
     finalized = true;
     const projectSlug = path.basename(projectDir);
-    await syncProjectDerivedState(projectSlug).catch((error) => {
-      console.warn(`[generation:${jobId}] 项目派生状态同步失败：${error instanceof Error ? error.message : String(error)}`);
-    });
+    await syncProjectDerivedState(projectSlug).catch(() => undefined);
     const documentsStatus = Object.fromEntries(statusRecords.map((record) => [record.id, record]));
-    const failedDocuments = statusRecords
-      .filter((record) => record.failed)
-      .map((record) => ({ id: record.id, fileName: record.fileName, validationErrors: record.validationErrors }));
+    const failedDocuments = statusRecords.filter((record) => record.failed).map((record) => ({ id: record.id, fileName: record.fileName, validationErrors: record.validationErrors }));
     const status = files.length === PROJECT_DOCUMENT_DEFINITIONS.length ? "complete" : files.length ? "partial" : "failed";
     const deadlineReached = taskSignal.aborted && taskSignal.reason instanceof DOMException && taskSignal.reason.name === "TimeoutError";
-    const message = status === "complete"
-      ? undefined
-      : deadlineReached
-        ? `任务达到 ${formatDuration(deadlineMs)} 截止时间，已保存 ${files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份通过校验的文档。`
-        : `${files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份文档可用，失败文档已保留为待重试状态。`;
     options.onStatus?.({
       status: status === "complete" ? "completed" : status,
-      currentDocument: status === "complete" ? "10_发布承接话术.md" : "生成已结束",
-      progress: files.length * 10,
-      message,
-      generationProgress: documentProgress(Object.fromEntries(progressState)),
+      currentDocument: status === "complete" ? "03_发布与复盘.md" : "生成已结束",
+      progress: Math.round((files.length / PROJECT_DOCUMENT_DEFINITIONS.length) * 100),
+      message: status === "complete" ? "三份核心文档已生成，并通过自动质量门。" : `${files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份核心文档可用。`,
+      generationProgress: documentProgress(progressState),
     });
     return { projectSlug, projectName, files, status, documentsStatus, failedDocuments, modelCalls, deadlineReached };
   } catch (error) {
@@ -418,21 +338,10 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
       options.onStatus?.({ status: "cancelled", currentDocument: "已撤销", progress: 0 });
       throw error;
     }
-    options.onStatus?.({
-      status: "failed",
-      currentDocument: "生成失败",
-      progress: 0,
-      message: error instanceof Error ? error.message : "生成失败。",
-    });
+    options.onStatus?.({ status: "failed", currentDocument: "生成失败", progress: 0, message: error instanceof Error ? error.message : "生成失败。" });
     throw error;
   } finally {
-    if (tempDir && !finalized) {
-      try {
-        await removeTempProjectDirectory(tempDir);
-      } catch (cleanupError) {
-        console.warn(`[generation:${jobId}] 临时目录清理失败：${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
-      }
-    }
+    if (tempDir && !finalized) await removeTempProjectDirectory(tempDir).catch(() => undefined);
   }
 }
 
@@ -445,9 +354,10 @@ async function readProjectMetadata(projectDir: string): Promise<Record<string, u
   }
 }
 
+/** 兼容旧按钮：新流程中的增强包就是拍摄执行稿与发布复盘。 */
 export async function generateEnhancedExecutionPackage(projectSlug: string): Promise<ContentFile[]> {
-  const result = await regenerateProjectDocuments(projectSlug, ["09", "10"]);
-  return result.files.filter((file) => file.name === "09_成片执行稿.md" || file.name === "10_发布承接话术.md");
+  const result = await regenerateProjectDocuments(projectSlug, ["02", "03"]);
+  return result.files.filter((file) => file.name === "02_拍摄执行稿.md" || file.name === "03_发布与复盘.md");
 }
 
 export interface RegenerateProjectOptions {
@@ -462,15 +372,6 @@ export async function regenerateProjectDocuments(
   options: RegenerateProjectOptions = {},
 ): Promise<{ files: ContentFile[]; status: "complete" | "partial" | "failed"; documentsStatus: Record<string, DocumentStatusRecord>; modelCalls: GenerationModelCallRecord[]; deadlineReached: boolean }> {
   const projectDir = resolveProjectDirectory(projectSlug);
-  const deadlineMs = options.deadlineMs ?? PROJECT_GENERATION_DEADLINE_MS;
-  const taskSignal = combineModelRequestSignal(options.signal, deadlineMs);
-  const modelCalls: GenerationModelCallRecord[] = [];
-  const regenerationId = `regenerate_${projectSlug}_${Date.now()}`;
-  const recordModelCall = (record: GenerationModelCallRecord) => {
-    modelCalls.push(record);
-    console.info(`[generation:${regenerationId}] model ${record.fileName} attempt=${record.attempt} status=${record.status} duration=${record.durationMs}ms kind=${record.failureKind || "none"} promptChars=${record.promptChars} totalTokens=${record.totalTokens ?? "unknown"}`);
-    options.onModelCall?.(record);
-  };
   const metadata = await readProjectMetadata(projectDir);
   const profile = resolveContentProfile(metadata);
   const input: GenerateInput = {
@@ -483,144 +384,70 @@ export async function regenerateProjectDocuments(
     targetAudience: typeof metadata.targetAudience === "string" ? metadata.targetAudience : "目标用户",
     extraRequirements: typeof metadata.extraRequirements === "string" ? metadata.extraRequirements : "",
   };
+  const deadlineMs = options.deadlineMs ?? PROJECT_GENERATION_DEADLINE_MS;
+  const taskSignal = combineModelRequestSignal(options.signal, deadlineMs);
+  const modelCalls: GenerationModelCallRecord[] = [];
+  const recordModelCall = (record: GenerationModelCallRecord) => { modelCalls.push(record); options.onModelCall?.(record); };
   const accountMemory = await getAccountMemory().catch(() => ({ ...EMPTY_ACCOUNT_MEMORY }));
-  const accountMemoryPrompt = accountMemoryHasContent(accountMemory) ? sanitizeAccountMemoryForPrompt(accountMemory) : "";
+  const accountMemoryPrompt = combineCreatorPrompts(
+    accountMemoryHasContent(accountMemory) ? sanitizeAccountMemoryForPrompt(accountMemory) : "",
+    await creatorLearningPrompt().catch(() => ""),
+  );
   const briefValue = metadata.projectBrief;
   const brief = briefValue && typeof briefValue === "object" && !Array.isArray(briefValue)
-    ? briefValue as Awaited<ReturnType<typeof createProjectBrief>>
+    ? { ...(briefValue as Awaited<ReturnType<typeof createProjectBrief>>), targetDuration: typeof (briefValue as Record<string, unknown>).targetDuration === "string" ? String((briefValue as Record<string, unknown>).targetDuration) : "45-60秒", requiredElements: typeof (briefValue as Record<string, unknown>).requiredElements === "string" ? String((briefValue as Record<string, unknown>).requiredElements) : "保留核心观点", forbiddenExpressions: typeof (briefValue as Record<string, unknown>).forbiddenExpressions === "string" ? String((briefValue as Record<string, unknown>).forbiddenExpressions) : "无" }
     : await createProjectBrief(input, accountMemoryPrompt, taskSignal, recordModelCall);
 
   const existing = new Map<string, string>();
-  const invalid = new Map<string, string[]>();
-  // 第一遍：读取所有文档，构建现有文档 Map
-  const allContents = new Map<string, string>();
   for (const definition of PROJECT_DOCUMENT_DEFINITIONS) {
-    try {
-      const content = await readFile(path.join(projectDir, definition.filename), "utf8");
-      allContents.set(definition.filename, content);
-    } catch {
-      // 文档缺失，稍后标记 invalid
-    }
+    try { existing.set(definition.filename, await readFile(path.join(projectDir, definition.filename), "utf8")); } catch { /* missing */ }
   }
-  // 第二遍：校验每份文档，传入其余文档做跨文档重复检测
+  const requested = new Set(requestedNumbers
+    .map((number) => number.padStart(2, "0"))
+    .filter((number) => PROJECT_DOCUMENT_DEFINITIONS.some((definition) => definition.number === number)));
+  const firstTarget = requested.size ? Math.min(...[...requested].map(Number)) : 1;
+  const targets = new Set(PROJECT_DOCUMENT_DEFINITIONS.filter((definition) => Number(definition.number) >= firstTarget).map((definition) => definition.number));
+  const regenerated = new Map<string, GeneratedDocumentResult>();
+  const accepted: Array<{ name: string; content: string }> = [];
+
   for (const definition of PROJECT_DOCUMENT_DEFINITIONS) {
-    const content = allContents.get(definition.filename);
-    if (!content) {
-      invalid.set(definition.number, ["文档缺失"]);
+    const current = existing.get(definition.filename);
+    if (!targets.has(definition.number) && current) {
+      accepted.push({ name: definition.filename, content: current });
       continue;
     }
-    const others = [...allContents.entries()]
-      .filter(([name]) => name !== definition.filename)
-      .map(([name, otherContent]) => ({ name, content: otherContent }));
-    const errors = validateDocument(content, definition, input, others);
-    if (errors.length) invalid.set(definition.number, errors);
-    else existing.set(definition.filename, content);
-  }
-
-  const requested = new Set(requestedNumbers.map((number) => number.padStart(2, "0")));
-  const targets = new Set(requested.size
-    ? [...requested].filter((number) => PROJECT_DOCUMENT_DEFINITIONS.some((definition) => definition.number === number))
-    : invalid.keys());
-  const dependencyMap: Record<string, string[]> = {
-    "08": ["01", "03", "06"],
-    "09": ["01", "03", "04", "05", "08"],
-    "10": ["01", "03", "06", "08", "09"],
-  };
-  const dependencyQueue = [...targets];
-  for (let index = 0; index < dependencyQueue.length; index += 1) {
-    for (const dependency of dependencyMap[dependencyQueue[index]] || []) {
-      if (!invalid.has(dependency) || targets.has(dependency)) continue;
-      targets.add(dependency);
-      dependencyQueue.push(dependency);
-    }
-  }
-
-  const regenerated = new Map<string, GeneratedDocumentResult>();
-  const generate = async (definition: (typeof PROJECT_DOCUMENT_DEFINITIONS)[number], context = "") => {
-    const accepted = [...existing.entries()]
-      .filter(([name]) => name !== definition.filename)
-      .map(([name, content]) => ({ name, content }));
-    const result = await generateValidatedDocument({ definition, input, brief, context, accountMemoryPrompt, acceptedDocuments: accepted, signal: taskSignal, onModelCall: recordModelCall });
+    const result = await generateValidatedDocument({
+      definition,
+      input,
+      brief,
+      context: documentContext(accepted, definition.number),
+      accountMemoryPrompt,
+      acceptedDocuments: accepted,
+      signal: taskSignal,
+      onModelCall: recordModelCall,
+    });
     regenerated.set(definition.number, result);
-    if (result.content) existing.set(definition.filename, result.content);
-  };
-  const coreTargets = CORE_PROJECT_DOCUMENT_DEFINITIONS.filter((definition) => targets.has(definition.number) && definition.number !== "08");
-  let index = 0;
-  await Promise.all(Array.from({ length: Math.min(3, Math.max(1, coreTargets.length)) }, async () => {
-    while (index < coreTargets.length) {
-      const definition = coreTargets[index++];
-      const context = definition.number === "04" || definition.number === "05"
-        ? productionContext([...existing.entries()].map(([name, content]) => ({ name, content })))
-        : "";
-      await generate(definition, context);
-    }
-  }));
-  if (targets.has("08")) {
-    const definition = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === "08")!;
-    const missing = dependencyMap["08"].map((id) => PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === id)!.filename).filter((name) => !existing.has(name));
-    if (missing.length) regenerated.set("08", { definition, repaired: false, validationErrors: [`依赖文档未通过校验：${missing.join("、")}`] });
-    else await generate(definition, qualityReviewContext([...existing.entries()].map(([name, content]) => ({ name, content }))));
-  }
-  for (const number of ["09", "10"] as const) {
-    if (!targets.has(number)) continue;
-    const definition = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === number)!;
-    const docs = [...existing.entries()].map(([name, content]) => ({ name, content }));
-    const required = dependencyMap[number].map((id) => PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === id)!.filename);
-    const missing = required.filter((name) => !existing.has(name));
-    if (missing.length) regenerated.set(number, { definition, repaired: false, validationErrors: [`依赖文档未通过校验：${missing.join("、")}`] });
-    else await generate(definition, `${executionDocumentInstructions(number)}\n\n${executionContext(docs, number)}`);
+    if (!result.content) break;
+    if (current) await archiveDocumentVersion(projectSlug, definition.filename, current, "regenerate");
+    await writeMarkdown(path.join(projectDir, definition.filename), result.content);
+    existing.set(definition.filename, result.content);
+    accepted.push({ name: definition.filename, content: result.content });
   }
 
-  for (const number of targets) {
-    const definition = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === number);
-    if (!definition) continue;
-    const result = regenerated.get(number);
-    const previousContent = allContents.get(definition.filename);
-    if (result?.content) {
-      if (previousContent) await archiveDocumentVersion(projectSlug, definition.filename, previousContent, "regenerate");
-      await writeMarkdown(path.join(projectDir, definition.filename), result.content);
-    }
-  }
-
-  const records: DocumentStatusRecord[] = PROJECT_DOCUMENT_DEFINITIONS.map((definition) => {
+  const records = PROJECT_DOCUMENT_DEFINITIONS.map((definition) => {
     const result = regenerated.get(definition.number);
-    const content = existing.get(definition.filename);
-    if (result?.content) return statusRecord(result);
-    // 手动重试一份原本有效的文档失败时，保留原版本及其可用状态。
-    if (result && content) {
-      return {
-        id: definition.number,
-        fileName: definition.filename,
-        status: "completed",
-        documentStatus: "generated",
-        generated: true,
-        repaired: false,
-        failed: false,
-        validationErrors: [],
-      };
-    }
     if (result) return statusRecord(result);
-    const completed = Boolean(content);
-    // 检测现有文档是否含占位语
-    const hasFallback = completed && PLACEHOLDER_PHRASES.some((phrase) => content!.includes(phrase));
-    const documentStatus: DocumentQualityStatus = !completed ? "failed" : hasFallback ? "fallback" : "generated";
-    return {
-      id: definition.number,
-      fileName: definition.filename,
-      status: completed && !hasFallback ? "completed" : "failed",
-      documentStatus,
-      generated: completed && !hasFallback,
-      repaired: false,
-      failed: !completed || hasFallback,
-      validationErrors: completed && !hasFallback ? [] : invalid.get(definition.number) || ["文档缺失"],
-    };
+    const content = existing.get(definition.filename);
+    return content ? statusRecord({ definition, content, repaired: false, validationErrors: [] }) : statusRecord({ definition, repaired: false, validationErrors: ["文档缺失"] });
   });
   const completedCount = records.filter((record) => record.generated).length;
-  const status = completedCount === 10 ? "complete" : completedCount ? "partial" : "failed";
+  const status = completedCount === PROJECT_DOCUMENT_DEFINITIONS.length ? "complete" : completedCount ? "partial" : "failed";
   const documentsStatus = Object.fromEntries(records.map((record) => [record.id, record]));
   const deadlineReached = taskSignal.aborted && taskSignal.reason instanceof DOMException && taskSignal.reason.name === "TimeoutError";
   await writeJson(path.join(projectDir, "project.json"), {
     ...metadata,
+    workflowVersion: 2,
+    workflowModel: "three-document-single-source",
     projectBrief: brief,
     status,
     documentsStatus,
@@ -628,24 +455,12 @@ export async function regenerateProjectDocuments(
     repaired: records.filter((record) => record.repaired).map((record) => record.id),
     failed: records.filter((record) => record.failed).map((record) => record.id),
     validationErrors: Object.fromEntries(records.filter((record) => record.validationErrors.length).map((record) => [record.id, record.validationErrors])),
-    fallbackUsed: records.some((record) => record.documentStatus === "fallback"),
-    fallbackDocuments: records.filter((record) => record.documentStatus === "fallback").map((record) => record.id),
+    qualityGate: { mode: "automatic-repair", passed: status === "complete", unresolved: Object.fromEntries(records.filter((record) => record.validationErrors.length).map((record) => [record.id, record.validationErrors])) },
     regeneratedAt: new Date().toISOString(),
-    lastRegeneration: {
-      requestedDocuments: [...requested],
-      deadlineMs,
-      deadlineReached,
-      modelCalls,
-    },
+    lastRegeneration: { requestedDocuments: [...requested], deadlineMs, deadlineReached, modelCalls },
   });
   await syncProjectDerivedState(projectSlug);
-  return {
-    files: [...existing.entries()].map(([name, content]) => ({ name, content })).sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true })),
-    status,
-    documentsStatus,
-    modelCalls,
-    deadlineReached,
-  };
+  return { files: [...existing.entries()].map(([name, content]) => ({ name, content })).sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true })), status, documentsStatus, modelCalls, deadlineReached };
 }
 
 export function revisedFilename(filename: string): string {
@@ -674,36 +489,218 @@ function assertMarkdownFilename(filename: string): void {
   }
 }
 
-/** 修改一个项目文件并另存，不覆盖原文。 */
-export async function refineProjectFile(
-  projectSlug: string,
-  filename: string,
-  feedback: string,
-): Promise<ContentFile> {
+function referencePackFromMetadata(metadata: Record<string, unknown>): string {
+  const pack = metadata.basisPack;
+  if (!pack || typeof pack !== "object" || Array.isArray(pack)) return "";
+  const source = pack as Record<string, unknown>;
+  const labels: Array<[string, string]> = [["viewpoints", "确认观点"], ["facts", "已知事实"], ["drafts", "已有草稿"], ["boundaries", "禁区与边界"], ["visualReferences", "按需视觉参考"], ["sources", "事实来源与授权"]];
+  return labels.map(([key, label]) => typeof source[key] === "string" && source[key].trim()
+    ? `## ${label}\n${source[key].trim().slice(0, 40_000)}` : "").filter(Boolean).join("\n\n");
+}
+
+interface ProjectRefineContext {
+  projectDir: string;
+  metadata: Record<string, unknown>;
+  content: string;
+  document: RefineDocument;
+  definition?: (typeof PROJECT_DOCUMENT_DEFINITIONS)[number];
+  brief?: Parameters<typeof validateDocument>[4];
+  input: GenerateInput;
+  otherDocuments: Array<{ name: string; content: string }>;
+}
+
+async function loadProjectRefineContext(projectSlug: string, filename: string): Promise<ProjectRefineContext> {
   assertMarkdownFilename(filename);
-  if (!feedback.trim()) throw new Error("修改意见不能为空。");
   const projectDir = resolveProjectDirectory(projectSlug);
+  let metadata: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path.join(projectDir, "project.json"), "utf8"));
+    metadata = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch { /* Reference material is optional. */ }
   let content: string;
   try {
     content = await readFile(path.join(projectDir, filename), "utf8");
   } catch (error) {
     throw new Error(`无法读取 Markdown 文件：${filename}`, { cause: error });
   }
-  const document: RefineDocument = { label: filename.replace(/\.md$/i, ""), filename, content };
-  const raw = await callModel(buildRefinePrompt([document], feedback.trim()));
-  let refined;
+  const profile = resolveContentProfile(metadata);
+  const briefValue = metadata.projectBrief;
+  const brief = briefValue && typeof briefValue === "object" && !Array.isArray(briefValue)
+    ? briefValue as Parameters<typeof validateDocument>[4]
+    : undefined;
+  const input: GenerateInput = {
+    projectName: typeof metadata.projectName === "string" ? metadata.projectName : projectSlug,
+    topic: typeof metadata.topic === "string" ? metadata.topic : projectSlug,
+    platform: typeof metadata.platform === "string" ? metadata.platform : "未指定平台",
+    contentSubject: profile.contentSubject || "未指定内容主体",
+    contentDomain: profile.contentDomain || "未指定内容领域",
+    style: typeof metadata.style === "string" ? metadata.style : "未指定风格",
+    targetAudience: typeof metadata.targetAudience === "string" ? metadata.targetAudience : "目标用户",
+    extraRequirements: typeof metadata.extraRequirements === "string" ? metadata.extraRequirements : "",
+  };
+  const otherDocuments: Array<{ name: string; content: string }> = (await Promise.all(PROJECT_DOCUMENT_DEFINITIONS
+    .filter((item) => item.filename !== filename)
+    .map(async (item): Promise<{ name: string; content: string } | null> => {
+      try { return { name: item.filename, content: await readFile(path.join(projectDir, item.filename), "utf8") }; } catch { return null; }
+    })))
+    .filter((item): item is { name: string; content: string } => item !== null);
+  return {
+    projectDir,
+    metadata,
+    content,
+    document: { label: filename.replace(/\.md$/i, ""), filename, content },
+    definition: PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.filename === filename),
+    brief,
+    input,
+    otherDocuments,
+  };
+}
+
+function validateRefinedProjectContent(
+  content: string,
+  context: ProjectRefineContext,
+  allowRecordedResults = false,
+): string[] {
+  if (!context.definition) return [];
+  return validateDocument(content, context.definition, context.input, context.otherDocuments, context.brief, { allowRecordedResults });
+}
+
+const FIXED_SPEECH_RATE_PATTERN = /\d{2,3}\s*字\s*[\/／每]\s*分钟/u;
+const CONFIRMATION_EXECUTION_REMINDER_PATTERN = /(?:手机|封面).{0,12}(?:预览|回放)|(?:先|需要|建议|完成后).{0,10}(?:试录|录一遍|拍一遍|试听|听(?:一下)?语气)/u;
+
+function replaceMarkdownSectionBody(content: string, heading: string, transform: (body: string) => string): string {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(^|\\n)(##\\s+${escaped}\\s*\\n)([\\s\\S]*?)(?=\\n##\\s+|$)`, "u");
+  return content.replace(pattern, (_match, prefix: string, header: string, body: string) => `${prefix}${header}${transform(body)}`);
+}
+
+const REVIEW_CHECKPOINTS = ["24 小时", "72 小时", "7 天"] as const;
+
+function hasUsableReviewRow(body: string, checkpoint: string): boolean {
+  const compact = checkpoint.replace(/\s+/g, "");
+  return body.split("\n").some((line) => {
+    if (!line.trim().startsWith("|") || !line.replace(/\s+/g, "").includes(compact)) return false;
+    return /发布后填写|(?:\d|已完成|已记录|不适用)/u.test(line.replace(checkpoint, ""));
+  });
+}
+
+function normalizePublishReviewTable(content: string): string {
+  return replaceMarkdownSectionBody(content, "数据复盘", (body) => {
+    if (REVIEW_CHECKPOINTS.every((checkpoint) => hasUsableReviewRow(body, checkpoint))) return body;
+    return [
+      "| 回收节点 | 播放与停留 | 互动与评论 | 结论 |",
+      "| --- | --- | --- | --- |",
+      "| 24 小时 | 发布后填写 | 发布后填写 | 发布后填写 |",
+      "| 72 小时 | 发布后填写 | 发布后填写 | 发布后填写 |",
+      "| 7 天 | 发布后填写 | 发布后填写 | 发布后填写 |",
+    ].join("\n");
+  });
+}
+
+/** 对可确定判断的机械规则做本地兜底，避免模型已修好大部分内容后卡在同一条校验上。 */
+export function normalizeAutomaticRepairCandidate(content: string, filename: string): string {
+  if (filename === "03_发布与复盘.md") return normalizePublishReviewTable(content).trim();
+  if (filename !== "01_创作简报.md") return content;
+  let normalized = replaceMarkdownSectionBody(content, "人工确认", (body) => {
+    const kept = body.split("\n").filter((line) => {
+      const text = line.trim();
+      if (!text) return true;
+      return !FIXED_SPEECH_RATE_PATTERN.test(text) && !CONFIRMATION_EXECUTION_REMINDER_PATTERN.test(text);
+    });
+    const meaningful = kept.some((line) => line.replace(/^\s*(?:[-*+]\s+|\d+[.)、]\s*)/u, "").trim());
+    return meaningful ? kept.join("\n").trimEnd() : "无。";
+  });
+  normalized = normalized.split("\n").map((line) => {
+    if (!FIXED_SPEECH_RATE_PATTERN.test(line)) return line;
+    const prefix = line.match(/^\s*(?:[-*+]\s+|\d+[.)、]\s*)/u)?.[0] || "";
+    return `${prefix}口播时长由最终逐字稿与镜头时间码共同校验。`;
+  }).join("\n");
+  return normalized.replace(/\n{3,}/gu, "\n\n").trim();
+}
+
+async function parseRefinedCandidate(raw: string, filename: string): Promise<string> {
   try {
-    refined = parseRefinedContent(raw, [filename]);
+    return parseRefinedContent(raw, [filename])[filename];
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "输出格式无效";
+    const reason = error instanceof Error ? error.message : "模型输出格式不正确";
     const repairedRaw = await callModel(buildRefineRepairPrompt(raw, filename, reason));
-    refined = parseRefinedContent(repairedRaw, [filename]);
+    return parseRefinedContent(repairedRaw, [filename])[filename];
   }
-  const outputName = await availableRevisedFilename(projectDir, filename);
-  await archiveDocumentVersion(projectSlug, filename, content, "refine-source");
-  await archiveDocumentVersion(projectSlug, filename, refined[filename], "refine-result");
-  await writeMarkdown(path.join(projectDir, outputName), refined[filename]);
-  return { name: outputName, content: refined[filename] };
+}
+
+async function generateRefinedProjectContent(
+  context: ProjectRefineContext,
+  feedback: string,
+  allowRecordedResults = false,
+  automaticRepair = false,
+): Promise<string> {
+  if (!automaticRepair) {
+    const raw = await callModel(buildRefinePrompt([context.document], feedback.trim(), referencePackFromMetadata(context.metadata)));
+    const candidate = await parseRefinedCandidate(raw, context.document.filename);
+    const errors = validateRefinedProjectContent(candidate, context, allowRecordedResults);
+    if (errors.length) throw new Error(`修改结果未通过质量门：${errors.join("；")}`);
+    return candidate;
+  }
+
+  let document = context.document;
+  let instruction = feedback.trim();
+  let remainingErrors: string[] = [];
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const raw = await callModel(buildRefinePrompt([document], instruction, referencePackFromMetadata(context.metadata)));
+    const parsed = await parseRefinedCandidate(raw, context.document.filename);
+    const candidate = normalizeAutomaticRepairCandidate(parsed, context.document.filename);
+    remainingErrors = validateRefinedProjectContent(candidate, context, allowRecordedResults);
+    if (!remainingErrors.length) return candidate;
+    document = { ...document, content: candidate };
+    instruction = `上一版自动修复后仍有以下校验错误，请只针对这些剩余问题继续修复，不要恢复已经删除的内容：\n${remainingErrors.map((error, index) => `${index + 1}. ${error}`).join("\n")}\n必须输出完整文档，并保留已经通过校验的结构、观点和事实边界。`;
+  }
+  throw new Error(`自动修复后仍未通过质量门：${remainingErrors.join("；")}`);
+}
+
+export function automaticRepairFeedback(filename: string, validationErrors: string[]): string {
+  const numberedErrors = validationErrors.map((error, index) => `${index + 1}. ${error}`).join("\n");
+  return `这是程序发起的自动质量修复，不是用户新增的创作要求。请直接修复“${filename}”中的以下校验问题：\n${numberedErrors}\n\n修复规则：\n- 保留原文已经成立的核心观点、事实边界和标题结构；\n- 只删除重复解释、无必要扩写和错误归类，不把信息改成空泛占位语；\n- 涉及长度上限时，在不丢失关键信息的前提下压缩到限制以内；\n- “人工确认”只保留确实需要用户选择、补充或核实的事项，普通执行提醒移入合适的执行章节或删除；\n- 不凭空新增事实、案例、承诺、固定语速或用户未提供的选择；\n- 输出完整可替换的 Markdown 文档。`;
+}
+
+/** 修改一个项目文件并另存，不覆盖原文。 */
+export async function refineProjectFile(
+  projectSlug: string,
+  filename: string,
+  feedback: string,
+): Promise<ContentFile> {
+  if (!feedback.trim()) throw new Error("修改意见不能为空。");
+  const context = await loadProjectRefineContext(projectSlug, filename);
+  const refinedContent = await generateRefinedProjectContent(context, feedback);
+  const outputName = await availableRevisedFilename(context.projectDir, filename);
+  await archiveDocumentVersion(projectSlug, filename, context.content, "refine-source");
+  await archiveDocumentVersion(projectSlug, filename, refinedContent, "refine-result");
+  await writeMarkdown(path.join(context.projectDir, outputName), refinedContent);
+  return { name: outputName, content: refinedContent };
+}
+
+export interface AutomaticRepairResult extends ContentFile {
+  repaired: boolean;
+  previousValidationErrors: string[];
+}
+
+/** 根据当前质量门错误自动修复原文；通过复检后才覆盖，并保留覆盖前版本。 */
+export async function autoRepairProjectFile(projectSlug: string, filename: string): Promise<AutomaticRepairResult> {
+  const context = await loadProjectRefineContext(projectSlug, filename);
+  if (!context.definition) throw new Error("当前文件不属于可自动修复的核心文档。");
+  const validationErrors = validateRefinedProjectContent(context.content, context, true);
+  if (!validationErrors.length) {
+    return { name: filename, content: context.content, repaired: false, previousValidationErrors: [] };
+  }
+  const repairedContent = await generateRefinedProjectContent(
+    context,
+    automaticRepairFeedback(filename, validationErrors),
+    true,
+    true,
+  );
+  await archiveDocumentVersion(projectSlug, filename, context.content, "auto-repair");
+  await writeMarkdown(path.join(context.projectDir, filename), repairedContent);
+  await syncProjectDerivedState(projectSlug);
+  return { name: filename, content: repairedContent, repaired: true, previousValidationErrors: validationErrors };
 }
 
 /** 扫描素材目录并将索引保存到指定项目。 */

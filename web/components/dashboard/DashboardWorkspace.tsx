@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { DashboardHeader } from "./DashboardHeader";
 import { TodayFocus } from "./TodayFocus";
-import { CurrentProjects } from "./CurrentProjects";
+import { DashboardOverview } from "./DashboardOverview";
 import type { DashboardData, DashboardProject, ProjectStage } from "./types";
 import { readJsonResponse } from "../../lib/readJsonResponse";
 
@@ -36,15 +36,18 @@ export function DashboardWorkspace({ initialNowIso, initialData }: DashboardWork
     if (!initialData) load();
   }, [initialData, load]);
 
-  // 推进中阶段优先级：planning → ready_to_shoot → shooting → editing → ready_to_publish → idea
+  // 先看事实推导出的阻塞级别，再用阶段和更新时间打破并列。
   const focusProject: DashboardProject | undefined = (() => {
     if (!data?.projects.length) return undefined;
-    const priority: ProjectStage[] = ["planning", "ready_to_shoot", "shooting", "editing", "ready_to_publish", "idea", "published"];
-    for (const stage of priority) {
-      const found = data.projects.find((p) => p.stage === stage);
-      if (found) return found;
-    }
-    return data.projects[0];
+    const stagePriority: ProjectStage[] = ["planning", "ready_to_shoot", "shooting", "editing", "ready_to_publish", "idea", "archived"];
+    const advicePriority = { blocking: 0, high: 1, normal: 2 } as const;
+    return [...data.projects].sort((left, right) => {
+      const byAdvice = (advicePriority[left.nextActionPriority || "normal"] ?? 2) - (advicePriority[right.nextActionPriority || "normal"] ?? 2);
+      if (byAdvice) return byAdvice;
+      const byStage = stagePriority.indexOf(left.stage) - stagePriority.indexOf(right.stage);
+      if (byStage) return byStage;
+      return Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    })[0];
   })();
 
   function openCreate() {
@@ -77,7 +80,7 @@ export function DashboardWorkspace({ initialNowIso, initialData }: DashboardWork
 
       <div className="dashboard-primary-column">
         <TodayFocus project={focusProject} onCreateProject={openCreate} onRecordIdea={openIdea} />
-        <CurrentProjects projects={data?.projects || []} />
+        {data && <DashboardOverview data={data} />}
       </div>
 
       {ideaOpen && (

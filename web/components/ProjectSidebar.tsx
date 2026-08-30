@@ -5,7 +5,8 @@ import {
   ArrowLeft,
   ChartDonut,
   FileText,
-  PaperPlaneTilt,
+  ImageSquare,
+  ShieldCheck,
   VideoCamera,
 } from "@phosphor-icons/react";
 import type { ResultFile } from "./ResultTabs";
@@ -13,7 +14,7 @@ import { StatusBadge } from "./StatusBadge";
 import { resolveContentProfile } from "../../src/utils/contentProfile";
 import { displayDocumentName, isPrimaryProjectDocument, PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinitions";
 
-type ProjectViewMode = "documents" | "execution" | "overview";
+type ProjectViewMode = "documents" | "execution" | "overview" | "visual" | "risk";
 
 interface ProjectSidebarProps {
   slug: string;
@@ -24,6 +25,8 @@ interface ProjectSidebarProps {
   onSelect: (name: string) => void;
   viewMode?: ProjectViewMode;
   onViewModeChange?: (mode: ProjectViewMode) => void;
+  migrating?: boolean;
+  onMigrate?: () => void;
 }
 
 export function ProjectSidebar({
@@ -35,19 +38,25 @@ export function ProjectSidebar({
   onSelect,
   viewMode = "documents",
   onViewModeChange,
+  migrating = false,
+  onMigrate,
 }: ProjectSidebarProps) {
   const profile = resolveContentProfile(metadata);
   const contentSubject = profile.contentSubject || "未记录";
   const primaryFiles = files.filter((file) => isPrimaryProjectDocument(file.name) && !/_修改版/u.test(file.name));
   const extraFiles = files.filter((file) => !primaryFiles.includes(file));
   const primaryFilesByName = new Map(primaryFiles.map((file) => [file.name, file]));
+  const usesCurrentWorkflow = primaryFiles.some((file) => PROJECT_DOCUMENT_DEFINITIONS.some((definition) => definition.filename === file.name));
   const documentsStatus = metadata.documentsStatus && typeof metadata.documentsStatus === "object" ? metadata.documentsStatus as Record<string, { status?: string; documentStatus?: string; validationErrors?: string[] }> : {};
-  const totalCoreCount = PROJECT_DOCUMENT_DEFINITIONS.length;
-  const completedCoreCount = PROJECT_DOCUMENT_DEFINITIONS.filter((definition) => {
-    const docStatus = documentsStatus[definition.number];
-    return docStatus?.documentStatus === "generated" || docStatus?.documentStatus === "repaired" || (!docStatus?.documentStatus && docStatus?.status === "completed");
-  }).length;
+  const totalCoreCount = usesCurrentWorkflow ? PROJECT_DOCUMENT_DEFINITIONS.length : Math.max(primaryFiles.length, Object.keys(documentsStatus).length);
+  const completedCoreCount = usesCurrentWorkflow
+    ? PROJECT_DOCUMENT_DEFINITIONS.filter((definition) => {
+        const docStatus = documentsStatus[definition.number];
+        return docStatus?.documentStatus === "generated" || docStatus?.documentStatus === "repaired" || (!docStatus?.documentStatus && docStatus?.status === "completed");
+      }).length
+    : Object.values(documentsStatus).filter((docStatus) => docStatus?.documentStatus === "generated" || docStatus?.documentStatus === "repaired" || (!docStatus?.documentStatus && docStatus?.status === "completed")).length || primaryFiles.length;
   const projectStatus = metadata.status === "complete" && completedCoreCount === totalCoreCount ? "complete" : completedCoreCount ? "partial" : "failed";
+  const isLegacyWorkflow = !usesCurrentWorkflow;
 
   function failureReason(docStatus: { validationErrors?: string[] } | undefined): string {
     const error = docStatus?.validationErrors?.[0] || "文档未生成";
@@ -122,20 +131,20 @@ export function ProjectSidebar({
         </Link>
         <section className="project-identity-card">
           <div className="project-card-head">
-            <StatusBadge tone={projectStatus === "complete" ? "ready" : projectStatus === "partial" ? "working" : "muted"}>
-              {projectStatus === "complete" ? "已完成" : projectStatus === "partial" ? "部分可用" : "待重试"}
+            <StatusBadge tone={isLegacyWorkflow ? "warning" : projectStatus === "complete" ? "ready" : projectStatus === "partial" ? "working" : "muted"}>
+              {isLegacyWorkflow ? "历史项目" : projectStatus === "complete" ? "已完成" : projectStatus === "partial" ? "部分可用" : "待重试"}
             </StatusBadge>
           </div>
           <h1>{projectName}</h1>
           <p className="project-identity-summary">{contentSubject} · {String(metadata.platform || "平台未记录")}</p>
-          <Link
-            className="secondary-button project-to-publish"
-            href={`/publish?new=1&project=${encodeURIComponent(slug)}`}
-            title="带入项目标题与发布文案，跳转到发布中心创建任务"
-          >
-            <PaperPlaneTilt size={16} weight="fill" />
-            发布
-          </Link>
+          {isLegacyWorkflow && onMigrate && (
+            <div className="legacy-workflow-notice">
+              <p>这是旧版十文档项目。迁移会先归档旧文档，再生成三份新版核心工作稿，不会丢失历史内容。</p>
+              <button className="secondary-button project-migration-button" type="button" onClick={onMigrate} disabled={migrating}>
+                {migrating ? "正在迁移到新版" : "迁移到新版工作流"}
+              </button>
+            </div>
+          )}
         </section>
 
         {/* 视图模式平级切换 */}
@@ -168,15 +177,43 @@ export function ProjectSidebar({
           </div>
         )}
 
-        <div className="step-flow" role="tablist" aria-label="项目文档步骤">
-          {PROJECT_DOCUMENT_DEFINITIONS.map((definition) => primaryFilesByName.get(definition.filename)
-            ? renderFile(primaryFilesByName.get(definition.filename)!)
-            : renderMissingFile(definition))}
+        <div className="step-flow" role="tablist" aria-label={isLegacyWorkflow ? "历史项目文档" : "新版核心工作稿"}>
+          {usesCurrentWorkflow
+            ? PROJECT_DOCUMENT_DEFINITIONS.map((definition) => primaryFilesByName.get(definition.filename)
+              ? renderFile(primaryFilesByName.get(definition.filename)!)
+              : renderMissingFile(definition))
+            : primaryFiles.map(renderFile)}
         </div>
+        {usesCurrentWorkflow && (
+          <section className="optional-module-nav" aria-label="按需模块">
+            <div className="optional-module-heading">
+              <span>按需模块</span>
+              <small>按需要补充</small>
+            </div>
+            <button
+              type="button"
+              className={viewMode === "visual" ? "optional-module-button visual active" : "optional-module-button visual"}
+              aria-current={viewMode === "visual" ? "page" : undefined}
+              onClick={() => onViewModeChange?.("visual")}
+            >
+              <span className="optional-module-icon"><ImageSquare size={17} weight="duotone" /></span>
+              <span className="optional-module-copy"><strong>视觉参考</strong><small>需要 AI 封面或复杂画面时再填写</small></span>
+            </button>
+            <button
+              type="button"
+              className={viewMode === "risk" ? "optional-module-button risk active" : "optional-module-button risk"}
+              aria-current={viewMode === "risk" ? "page" : undefined}
+              onClick={() => onViewModeChange?.("risk")}
+            >
+              <span className="optional-module-icon"><ShieldCheck size={17} weight="duotone" /></span>
+              <span className="optional-module-copy"><strong>风险与来源</strong><small>事实、出处、授权和禁区</small></span>
+            </button>
+          </section>
+        )}
         {extraFiles.length > 0 && (
           <>
             <div className="pipeline-title secondary">
-              <div><h2>附加文件</h2></div>
+              <div><h2>{isLegacyWorkflow ? "其他历史文件" : "附加文件"}</h2></div>
               <span className="pipeline-count">{extraFiles.length}</span>
             </div>
             <div className="step-flow extras" role="tablist" aria-label="附加项目文件">
