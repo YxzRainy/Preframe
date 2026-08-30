@@ -9071,7 +9071,7 @@ body {
 /* Workbench refinement · one clear action, quieter surfaces                   */
 /* -------------------------------------------------------------------------- */
 [data-theme="dark"] {
-  --app-sidebar-width: 236px;
+  --app-sidebar-width: 228px;
   --app-topbar-height: 68px;
   --bg-root: #161817;
   --bg-sidebar: #111312;
@@ -13246,12 +13246,13 @@ body:has(.dashboard-shell) .dashboard-queue-progress i {
 /* Auto-repair result: a quiet confirmation; the document remains the visual focus. */
 .document-success-alert {
   display: flex;
-  align-self: stretch;
+  align-self: center;
   align-items: center;
   gap: 10px;
-  width: 100%;
+  width: fit-content;
+  max-width: calc(100% - 32px);
   box-sizing: border-box;
-  margin: 0 0 20px;
+  margin: 0 auto 20px;
   padding: 9px 12px 9px 10px;
   border: 1px solid color-mix(in srgb, var(--success) 34%, var(--border-subtle));
   border-radius: 12px;
@@ -13260,7 +13261,7 @@ body:has(.dashboard-shell) .dashboard-queue-progress i {
   box-shadow: 0 1px 2px rgba(0, 0, 0, .08);
 }
 .document-success-alert > svg { flex: 0 0 auto; color: var(--success); }
-.document-success-copy { display: flex; flex: 1 1 auto; min-width: 0; align-items: baseline; gap: 6px; }
+.document-success-copy { display: flex; min-width: 0; align-items: baseline; gap: 6px; }
 .document-success-copy strong { font-size: 11px; font-weight: 650; letter-spacing: -.01em; white-space: nowrap; }
 .document-success-copy span { overflow: hidden; color: var(--text-secondary); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .document-success-confirm {
@@ -13293,7 +13294,7 @@ body:has(.dashboard-shell) .dashboard-queue-progress i {
   outline-offset: 2px;
 }
 @media (max-width: 520px) {
-  .document-success-alert { align-items: flex-start; border-radius: 10px; }
+  .document-success-alert { align-items: flex-start; max-width: calc(100% - 20px); border-radius: 10px; }
   .document-success-copy { align-items: flex-start; flex-direction: column; gap: 1px; }
   .document-success-copy span { white-space: normal; }
   .document-success-confirm { margin-left: auto; }
