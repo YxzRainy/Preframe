@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { getDataDir } from "./runtimePaths.js";
 import { collectArchiveFiles, validateArchiveFiles, writeArchiveFiles, type PortableArchiveFile } from "./portableArchive.js";
 
 export interface ConfigBackupV1 {
@@ -13,7 +14,7 @@ export interface ConfigBackupV1 {
 const EXCLUDED_PREFIXES = ["trash/", "backups/", "browser-profiles/"];
 
 function dataDir(): string {
-  return process.env.PIANCE_DATA_DIR?.trim() ? path.resolve(process.env.PIANCE_DATA_DIR) : path.resolve(process.cwd(), ".piance");
+  return getDataDir();
 }
 
 function included(relativePath: string): boolean {

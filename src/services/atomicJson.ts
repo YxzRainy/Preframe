@@ -2,11 +2,10 @@
 
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { getDataDir } from "./runtimePaths.js";
 
 function dataDir(): string {
-  return process.env.PIANCE_DATA_DIR?.trim()
-    ? path.resolve(process.env.PIANCE_DATA_DIR)
-    : path.resolve(process.cwd(), ".piance");
+  return getDataDir();
 }
 
 function filePath(name: string): string {

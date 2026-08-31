@@ -1,5 +1,6 @@
 import { appendFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { getDataDir } from "./runtimePaths.js";
 
 export interface DiagnosticEntry {
   id: string;
@@ -12,7 +13,7 @@ export interface DiagnosticEntry {
 const MAX_ENTRIES = 200;
 
 function dataDir(): string {
-  return process.env.PIANCE_DATA_DIR?.trim() ? path.resolve(process.env.PIANCE_DATA_DIR) : path.resolve(process.cwd(), ".piance");
+  return getDataDir();
 }
 
 function logPath(): string {

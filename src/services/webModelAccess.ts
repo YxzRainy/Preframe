@@ -8,10 +8,11 @@ import {
 
 export const WEB_MODEL_NAME = "deepseek-v4-flash";
 const DEEPSEEK_PUBLIC_BASE_URL = "https://api.deepseek.com/v1";
+export const WEB_MODEL_COOKIE = "piance-model-key";
 
 export interface WebModelAccess {
   config: ModelConfig;
-  source: "env";
+  source: "env" | "cookie";
 }
 
 export class WebModelAccessError extends Error {
@@ -42,8 +43,28 @@ function createDeepSeekFlashConfig(apiKey: string, baseURL: string): ModelConfig
   });
 }
 
-export function publicWebModelConfig(): PublicModelConfig {
-  const configured = Boolean(process.env.DEEPSEEK_API_KEY?.trim());
+function cookieValue(request: Request | undefined, name: string): string {
+  const header = request?.headers.get("cookie") || "";
+  for (const part of header.split(";")) {
+    const [rawName, ...rawValue] = part.trim().split("=");
+    if (rawName !== name) continue;
+    try { return decodeURIComponent(rawValue.join("=")).trim(); } catch { return ""; }
+  }
+  return "";
+}
+
+export function webModelApiKey(request?: Request): { apiKey: string; source: "cookie" | "env" | "default" } {
+  const cookieKey = cookieValue(request, WEB_MODEL_COOKIE);
+  if (cookieKey) return { apiKey: cookieKey, source: "cookie" };
+  const envKey = process.env.DEEPSEEK_API_KEY?.trim() || "";
+  if (envKey) return { apiKey: envKey, source: "env" };
+  return { apiKey: "", source: "default" };
+}
+
+export function publicWebModelConfig(request?: Request, overrideApiKey?: string): PublicModelConfig {
+  const selected = overrideApiKey?.trim()
+    ? { apiKey: overrideApiKey.trim(), source: "cookie" as const }
+    : webModelApiKey(request);
   return {
     provider: "deepseek",
     providerLabel: "DeepSeek",
@@ -53,23 +74,23 @@ export function publicWebModelConfig(): PublicModelConfig {
     maxTokens: 8192,
     thinkingMode: "low",
     maskedApiKey: "",
-    configured,
-    source: configured ? "env" : "default",
+    configured: Boolean(selected.apiKey),
+    source: selected.source === "default" ? "default" : "request",
   };
 }
 
-export function getWebModelAccess(_body: Record<string, unknown> = {}): WebModelAccess {
-  const apiKey = process.env.DEEPSEEK_API_KEY?.trim() || "";
-  if (!apiKey) {
+export function getWebModelAccess(request?: Request): WebModelAccess {
+  const selected = webModelApiKey(request);
+  if (!selected.apiKey) {
     throw new WebModelAccessError(
-      "本机尚未配置 DeepSeek API Key，请在模型设置中保存到项目 .env 文件。",
+      "当前浏览器尚未配置 DeepSeek API Key，请在模型设置中保存你自己的 Key。",
       503,
       "DEFAULT_MODEL_UNAVAILABLE",
     );
   }
   return {
-    config: createDeepSeekFlashConfig(apiKey, defaultBaseUrl()),
-    source: "env",
+    config: createDeepSeekFlashConfig(selected.apiKey, defaultBaseUrl()),
+    source: selected.source === "cookie" ? "cookie" : "env",
   };
 }
 
@@ -83,17 +104,17 @@ function containsModelFailure(error: unknown, kinds: Set<string>): boolean {
 }
 
 export async function runWithWebModelAccess<T>(
-  body: Record<string, unknown>,
+  request: Request,
   task: (access: WebModelAccess) => Promise<T>,
 ): Promise<T> {
-  const access = getWebModelAccess(body);
+  const access = getWebModelAccess(request);
   try {
     return await withModelConfig(access.config, () => task(access));
   } catch (error) {
     const unavailable = containsModelFailure(error, new Set(["auth", "config", "rate_limit", "server", "timeout"]));
     if (!unavailable) throw error;
     throw new WebModelAccessError(
-      "本机 .env 中的 DeepSeek API Key 当前不可用，请检查密钥或稍后重试。",
+      "当前浏览器保存的 DeepSeek API Key 不可用，请检查密钥或稍后重试。",
       400,
       "CUSTOM_MODEL_UNAVAILABLE",
       { cause: error },

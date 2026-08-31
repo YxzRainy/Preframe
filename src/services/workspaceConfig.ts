@@ -3,9 +3,13 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { writeJsonAtomicPath } from "./atomicJson.js";
+import { getDataDir, getDefaultOutputDir as getRuntimeDefaultOutputDir, usesEphemeralStorage } from "./runtimePaths.js";
 
 const DEFAULT_OUTPUT_DIR = "output";
-const WORKSPACE_CONFIG_PATH = path.resolve(process.cwd(), ".piance", "workspace.json");
+
+function workspaceConfigPath(): string {
+  return path.join(getDataDir(), "workspace.json");
+}
 
 export interface WorkspaceConfig {
   mode?: "project" | "external";
@@ -35,12 +39,12 @@ export function resolveWorkspaceOutputPath(config: WorkspaceConfig): string {
   if (typeof config.outputDir === "string" && config.outputDir.trim()) {
     return path.resolve(process.cwd(), expandHome(config.outputDir.trim()));
   }
-  return path.resolve(process.cwd(), config.relativePath || DEFAULT_OUTPUT_DIR);
+  return path.resolve(path.dirname(getDefaultOutputDir()), config.relativePath || DEFAULT_OUTPUT_DIR);
 }
 
 function readWorkspaceConfigSync(): WorkspaceConfig {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(WORKSPACE_CONFIG_PATH, "utf8"));
+    const parsed: unknown = JSON.parse(readFileSync(workspaceConfigPath(), "utf8"));
     return parsed && typeof parsed === "object" ? parsed as WorkspaceConfig : { mode: "project", relativePath: "output" };
   } catch {
     return { mode: "project", relativePath: "output" };
@@ -49,7 +53,7 @@ function readWorkspaceConfigSync(): WorkspaceConfig {
 
 async function readWorkspaceConfig(): Promise<WorkspaceConfig> {
   try {
-    const parsed: unknown = JSON.parse(await readFile(WORKSPACE_CONFIG_PATH, "utf8"));
+    const parsed: unknown = JSON.parse(await readFile(workspaceConfigPath(), "utf8"));
     return parsed && typeof parsed === "object" ? parsed as WorkspaceConfig : { mode: "project", relativePath: "output" };
   } catch {
     return { mode: "project", relativePath: "output" };
@@ -57,19 +61,19 @@ async function readWorkspaceConfig(): Promise<WorkspaceConfig> {
 }
 
 export function getDefaultOutputDir(): string {
-  return path.resolve(process.cwd(), DEFAULT_OUTPUT_DIR);
+  return getRuntimeDefaultOutputDir();
 }
 
 export function getOutputDirSync(): string {
   if (process.env.PIANCE_OUTPUT_DIR?.trim()) {
-    return path.resolve(process.cwd(), expandHome(process.env.PIANCE_OUTPUT_DIR));
+    return path.resolve(path.dirname(getDefaultOutputDir()), expandHome(process.env.PIANCE_OUTPUT_DIR));
   }
   return resolveWorkspaceOutputPath(readWorkspaceConfigSync());
 }
 
 export async function getOutputDir(): Promise<string> {
   if (process.env.PIANCE_OUTPUT_DIR?.trim()) {
-    return path.resolve(process.cwd(), expandHome(process.env.PIANCE_OUTPUT_DIR));
+    return path.resolve(path.dirname(getDefaultOutputDir()), expandHome(process.env.PIANCE_OUTPUT_DIR));
   }
   return resolveWorkspaceOutputPath(await readWorkspaceConfig());
 }
@@ -77,7 +81,7 @@ export async function getOutputDir(): Promise<string> {
 export function formatWorkspacePath(target: string): string {
   const resolved = path.resolve(target);
   const defaultDir = getDefaultOutputDir();
-  if (resolved === defaultDir) return "项目内 output/";
+  if (resolved === defaultDir) return usesEphemeralStorage() ? "临时工作区 output/" : "项目内 output/";
   const home = os.homedir();
   if (resolved === home) return "~";
   if (resolved.startsWith(`${home}${path.sep}`)) return `~/${path.relative(home, resolved)}`;
@@ -103,7 +107,7 @@ export async function setOutputDir(absolutePath: string): Promise<string> {
   const resolved = path.resolve(expanded);
   await ensureOutputDir(resolved);
   const config: WorkspaceConfig = { mode: "external", absolutePath: resolved };
-  await writeJsonAtomicPath(WORKSPACE_CONFIG_PATH, config);
+  await writeJsonAtomicPath(workspaceConfigPath(), config);
   return resolved;
 }
 
@@ -111,7 +115,7 @@ export async function resetOutputDir(): Promise<string> {
   const resolved = getDefaultOutputDir();
   await ensureOutputDir(resolved);
   const config: WorkspaceConfig = { mode: "project", relativePath: "output" };
-  await writeJsonAtomicPath(WORKSPACE_CONFIG_PATH, config);
+  await writeJsonAtomicPath(workspaceConfigPath(), config);
   return resolved;
 }
 
@@ -173,7 +177,7 @@ export async function getWorkspaceStats(currentProjectName = "未创建"): Promi
 }
 
 export function hasCustomWorkspaceConfig(): boolean {
-  return existsSync(WORKSPACE_CONFIG_PATH);
+  return existsSync(workspaceConfigPath());
 }
 
 export async function canAccessDirectory(directory: string): Promise<boolean> {

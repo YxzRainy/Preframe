@@ -1,10 +1,17 @@
 import { mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { getDataDir } from "./runtimePaths.js";
 
 const DEFAULT_PROFILE_NAME = "创作者";
 const MAX_AVATAR_BYTES = 10 * 1024 * 1024;
-const PROFILE_DIR = path.resolve(process.cwd(), ".piance", "profile");
-const PROFILE_CONFIG_PATH = path.resolve(PROFILE_DIR, "..", "profile.json");
+
+function profileDir(): string {
+  return path.join(getDataDir(), "profile");
+}
+
+function profileConfigPath(): string {
+  return path.join(getDataDir(), "profile.json");
+}
 
 const AVATAR_MIME_BY_EXTENSION: Record<string, string> = {
   ".png": "image/png",
@@ -46,15 +53,15 @@ function normalizeProfile(value: unknown): CreatorProfile {
 
 async function readProfileConfig(): Promise<CreatorProfile> {
   try {
-    return normalizeProfile(JSON.parse(await readFile(PROFILE_CONFIG_PATH, "utf8")));
+    return normalizeProfile(JSON.parse(await readFile(profileConfigPath(), "utf8")));
   } catch {
     return { name: DEFAULT_PROFILE_NAME };
   }
 }
 
 async function writeProfileConfig(profile: CreatorProfile): Promise<void> {
-  await mkdir(path.dirname(PROFILE_CONFIG_PATH), { recursive: true });
-  await writeFile(PROFILE_CONFIG_PATH, `${JSON.stringify(profile, null, 2)}\n`, "utf8");
+  await mkdir(path.dirname(profileConfigPath()), { recursive: true });
+  await writeFile(profileConfigPath(), `${JSON.stringify(profile, null, 2)}\n`, "utf8");
 }
 
 function relativeAvatarPath(extension: string): string {
@@ -62,17 +69,15 @@ function relativeAvatarPath(extension: string): string {
 }
 
 function absoluteAvatarPath(avatarPath: string): string {
-  const resolved = path.resolve(process.cwd(), avatarPath);
-  if (!resolved.startsWith(`${PROFILE_DIR}${path.sep}`)) {
-    throw new Error("头像路径无效。");
-  }
-  return resolved;
+  const name = path.basename(avatarPath);
+  if (!/^avatar\.(?:png|jpe?g|webp)$/iu.test(name)) throw new Error("头像路径无效。");
+  return path.join(profileDir(), name);
 }
 
 async function clearAvatarFiles(): Promise<void> {
   await Promise.all(Object.keys(AVATAR_MIME_BY_EXTENSION).map(async (extension) => {
     try {
-      await unlink(path.join(PROFILE_DIR, `avatar${extension}`));
+      await unlink(path.join(profileDir(), `avatar${extension}`));
     } catch {
       // Missing old avatar files are fine.
     }
@@ -100,7 +105,7 @@ export async function saveCreatorProfile(name: string, avatar?: AvatarUpload): P
     const extension = AVATAR_EXTENSION_BY_MIME[avatar.mimeType];
     if (!extension) throw new Error("头像仅支持 png、jpg、jpeg、webp。");
     if (avatar.bytes.byteLength > MAX_AVATAR_BYTES) throw new Error("头像文件不能超过 10MB。");
-    await mkdir(PROFILE_DIR, { recursive: true });
+    await mkdir(profileDir(), { recursive: true });
     await clearAvatarFiles();
     const avatarPath = relativeAvatarPath(extension);
     await writeFile(absoluteAvatarPath(avatarPath), avatar.bytes);

@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { getDataDir } from "./runtimePaths.js";
 import { resolveContentProfile } from "../utils/contentProfile.js";
 import { inferStage, PROJECT_STAGE_ORDER } from "./projectStage.js";
 import { getOutputDir } from "./workspaceConfig.js";
@@ -18,7 +19,7 @@ export interface MigrationReport {
 }
 
 function dataDir(): string {
-  return process.env.PIANCE_DATA_DIR?.trim() ? path.resolve(process.env.PIANCE_DATA_DIR) : path.resolve(process.cwd(), ".piance");
+  return getDataDir();
 }
 
 async function projectJsonPaths(): Promise<string[]> {

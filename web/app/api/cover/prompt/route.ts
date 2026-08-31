@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     const content = (sourceFiles.length ? sourceFiles : project.files)
       .map((file) => `<!-- ${file.name} -->\n${file.content.trim()}`)
       .join("\n\n---\n\n");
-    const prompt = await runWithWebModelAccess(body, async () => (
+    const prompt = await runWithWebModelAccess(request, async () => (
       normalizeGeneratedCoverPrompt(await callModel(buildCoverPromptRegenerationPrompt(topic, content, ratio)))
     ));
     return NextResponse.json({ ok: true, success: true, prompt });

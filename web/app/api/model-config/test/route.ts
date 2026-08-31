@@ -8,9 +8,9 @@ export const runtime = "nodejs";
 export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
-    const result = await runWithWebModelAccess({}, ({ config }) => testModelConnection({ ...config }, ""));
+    const result = await runWithWebModelAccess(request, ({ config }) => testModelConnection({ ...config }, ""));
     return NextResponse.json({ ok: true, success: true, message: result.message, config: result.config });
   } catch (error) {
-    return apiError(error, "model", "DeepSeek Flash 连接失败，请检查本机 .env 中的 API Key。", 400);
+    return apiError(error, "model", "DeepSeek Flash 连接失败，请检查当前浏览器保存的 API Key。", 400);
   }
 }

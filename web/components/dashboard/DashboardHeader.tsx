@@ -30,7 +30,7 @@ export function DashboardHeader({ initialNowIso }: DashboardHeaderProps) {
         <h1 className="dashboard-greeting">
           {greetingDisplay}。
         </h1>
-        <p className="dashboard-status">把一个想法推进成可拍、可发的内容。</p>
+        <p className="dashboard-status">让一闪而过的灵感，长成一条值得被看见的短视频。</p>
       </div>
     </header>
   );

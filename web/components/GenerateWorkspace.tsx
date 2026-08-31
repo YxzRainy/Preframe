@@ -144,8 +144,8 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
     if (!response.ok || !data.config) throw new Error(data.error || "生成服务状态读取失败。");
     const configured = Boolean(data.config.configured);
     const message = configured
-      ? "本机 .env 中的 DeepSeek Flash 已就绪"
-      : "请先把自己的 DeepSeek API Key 保存到本机 .env";
+      ? "当前浏览器的 DeepSeek Flash 已就绪"
+      : "请先在模型设置中保存你自己的 DeepSeek API Key";
     setModelStatus({
       providerLabel: data.config.providerLabel,
       model: data.config.model,

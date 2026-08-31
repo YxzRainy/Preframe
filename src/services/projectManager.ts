@@ -3,6 +3,7 @@ import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "n
 import path from "node:path";
 import { sanitizeFilename } from "../utils/sanitizeFilename.js";
 import { ensureOutputDir, getDefaultOutputDir, getOutputDirSync } from "./workspaceConfig.js";
+import { getDataDir } from "./runtimePaths.js";
 
 export interface ProjectInfo {
   name: string;
@@ -12,8 +13,7 @@ export interface ProjectInfo {
 const TRASH_MARKER = ".preframe-trash.json";
 
 function trashDir(): string {
-  const root = process.env.PIANCE_DATA_DIR?.trim() ? path.resolve(process.env.PIANCE_DATA_DIR) : path.resolve(process.cwd(), ".piance");
-  return path.join(root, "trash");
+  return path.join(getDataDir(), "trash");
 }
 
 export interface TrashProjectInfo {

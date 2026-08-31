@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { getDataDir } from "./runtimePaths.js";
 
 export interface AccountMemory {
   accountName: string;
@@ -26,7 +27,6 @@ export interface AccountMemorySnapshot {
   creatorPersona: string;
 }
 
-const CONFIG_DIR = ".piance";
 const CONFIG_FILE = "account-memory.json";
 const FIELD_LIMIT = 4000;
 const SNAPSHOT_LIMIT = 240;
@@ -65,12 +65,8 @@ export const EMPTY_ACCOUNT_MEMORY: AccountMemory = {
   notes: "",
 };
 
-function repoRoot(): string {
-  return process.cwd();
-}
-
 export function accountMemoryPath(): string {
-  return path.join(repoRoot(), CONFIG_DIR, CONFIG_FILE);
+  return path.join(getDataDir(), CONFIG_FILE);
 }
 
 function sanitizeText(value: unknown, limit = FIELD_LIMIT): string {

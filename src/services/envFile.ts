@@ -1,12 +1,9 @@
-import { chmod, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const DEFAULT_ENV_PATH = path.join(PROJECT_ROOT, ".env");
+import { getDefaultEnvPath } from "./runtimePaths.js";
 const KEY_NAME = "DEEPSEEK_API_KEY";
 
-function validateApiKey(value: unknown): string {
+export function validateDeepSeekApiKey(value: unknown): string {
   const apiKey = typeof value === "string" ? value.trim() : "";
   if (!apiKey || /^(?:your[-_ ]?api[-_ ]?key|sk-\.\.\.)$/iu.test(apiKey)) {
     throw new Error("请填写真实的 DeepSeek API Key。");
@@ -18,7 +15,7 @@ function validateApiKey(value: unknown): string {
 }
 
 function envPath(): string {
-  return process.env.PIANCE_ENV_FILE?.trim() ? path.resolve(process.env.PIANCE_ENV_FILE) : DEFAULT_ENV_PATH;
+  return process.env.PIANCE_ENV_FILE?.trim() ? path.resolve(process.env.PIANCE_ENV_FILE) : getDefaultEnvPath();
 }
 
 async function readEnv(): Promise<string> {
@@ -59,6 +56,7 @@ function updateEnvValue(source: string, value: string | null): string {
 async function writeEnv(content: string): Promise<void> {
   const targetPath = envPath();
   const tempPath = `${targetPath}.${process.pid}.${Date.now()}.tmp`;
+  await mkdir(path.dirname(targetPath), { recursive: true });
   await writeFile(tempPath, content, { encoding: "utf8", mode: 0o600 });
   await rename(tempPath, targetPath);
   await chmod(targetPath, 0o600);
@@ -69,7 +67,7 @@ export function localEnvPath(): string {
 }
 
 export async function saveDeepSeekApiKey(value: unknown): Promise<string> {
-  const apiKey = validateApiKey(value);
+  const apiKey = validateDeepSeekApiKey(value);
   await writeEnv(updateEnvValue(await readEnv(), apiKey));
   process.env.DEEPSEEK_API_KEY = apiKey;
   return apiKey;

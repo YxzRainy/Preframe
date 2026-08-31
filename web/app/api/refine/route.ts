@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     const projectSlug = body.projectSlug;
     const fileName = body.fileName;
     const feedback = body.feedback;
-    const file = await runWithWebModelAccess(body, () => refineProjectFile(projectSlug, fileName, feedback));
+    const file = await runWithWebModelAccess(request, () => refineProjectFile(projectSlug, fileName, feedback));
     return NextResponse.json({ ok: true, success: true, file });
   } catch (error) {
     return apiError(error, "refine", "修改失败。", 400);

@@ -282,7 +282,7 @@ export async function POST(request: Request) {
       extraRequirements: typeof body.extra === "string" ? body.extra.trim() : "",
     };
     const activeJob = job;
-    const result = await runWithWebModelAccess(body, () => generateProject(input, {
+    const result = await runWithWebModelAccess(request, () => generateProject(input, {
       jobId,
       generationStartedAt: activeJob.startedAt,
       signal: activeJob.abortController.signal,

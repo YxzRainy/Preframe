@@ -63,7 +63,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
     const feedbackText = [feedback.title, feedback.overallNote, feedback.scriptAdjustments, feedback.storyboardAdjustments, feedback.checklistAdjustments].filter(Boolean).join("\n") + "\n" + JSON.stringify(feedback);
     const strategy = typeof metadata.shootingStrategy === "object" && metadata.shootingStrategy ? JSON.stringify(metadata.shootingStrategy) : "";
     const promptFiles = [project.files.find((file) => file.name === "01_创作简报.md"), ...sourceFiles].filter(Boolean) as Array<{ name: string; content: string }>;
-    let raw = await runWithWebModelAccess(body, () => callModel(buildFeedbackRevisionPrompt(input, promptFiles, feedbackText, strategy)));
+    let raw = await runWithWebModelAccess(request, () => callModel(buildFeedbackRevisionPrompt(input, promptFiles, feedbackText, strategy)));
     let files: Array<{ filename: string; content: string }>;
     let errors: string[] = [];
     try {
@@ -72,7 +72,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ slu
       if (errors.length) throw new Error(errors.join("；"));
     } catch (firstError) {
       errors = [firstError instanceof Error ? firstError.message : "修订包解析失败"];
-      raw = await runWithWebModelAccess(body, () => callModel(buildFeedbackRevisionRepairPrompt(raw, errors)));
+      raw = await runWithWebModelAccess(request, () => callModel(buildFeedbackRevisionRepairPrompt(raw, errors)));
       files = readOutput(raw);
       errors = validateOutput(files, metadata, slug);
       if (errors.length) throw new Error(`修订包未通过质量校验：${errors.join("；")}`);
