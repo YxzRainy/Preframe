@@ -17,6 +17,7 @@ import { combineModelRequestSignal, createModelClient, ModelClientError } from "
 import { parseModelJsonObject } from "../utils/modelJson.js";
 import { automaticRepairFeedback, normalizeAutomaticRepairCandidate } from "../services/contentWorkflow.js";
 import { parseRefinedContent } from "../prompts/refinePrompt.js";
+import { buildDocumentPrompt, buildDocumentRepairPrompt } from "../prompts/generatePrompt.js";
 
 // 辅助：找一个定义
 const def01 = PROJECT_DOCUMENT_DEFINITIONS.find((d) => d.number === "01")!;
@@ -57,6 +58,26 @@ test("自动修复提示只处理质量门错误并保护原文信息", () => {
   assert.match(prompt, /人工确认/u);
   assert.match(prompt, /不凭空新增事实/u);
   assert.match(prompt, /完整可替换的 Markdown 文档/u);
+});
+
+test("拍摄执行稿生成和修复都限制输出预算，避免修复被模型截断", () => {
+  const definition = PROJECT_DOCUMENT_DEFINITIONS.find((item) => item.number === "02")!;
+  const brief = {
+    ...input,
+    extraRequirements: "无",
+    coreViewpoint: "测试选题需要具体执行",
+    contentStructure: "问题、判断、步骤、边界",
+    targetDuration: "45-60秒",
+    requiredElements: "核心判断",
+    forbiddenExpressions: "无",
+    riskBoundaries: "不编造事实",
+  };
+  const generated = buildDocumentPrompt(brief, definition);
+  const repaired = buildDocumentRepairPrompt("# 拍摄执行稿\n\n原始内容", ["镜头时间码不连续"], definition, brief, input);
+
+  assert.match(generated, /Markdown 正文不超过 2200 个字符/u);
+  assert.match(repaired, /只交付替换后的最终文档/u);
+  assert.match(repaired, /--- 原文结束 ---[\s\S]*Markdown 正文不超过 2200 个字符/u);
 });
 
 test("修改结果会移除误抄进正文的文件边界", () => {

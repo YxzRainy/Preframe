@@ -18,6 +18,9 @@ import { runWithWebModelAccess } from "../../../lib/model-access";
 import { assertSameOrigin, readRequestJson } from "../_utils";
 
 export const runtime = "nodejs";
+// Supported hosts such as Vercel use this upper bound; hosts that ignore it
+// still receive the event-stream keepalive returned by POST below.
+export const maxDuration = 300;
 
 interface GenerationJobSnapshot {
   jobId: string;
@@ -44,6 +47,7 @@ interface GenerationJobSnapshot {
 const jobs = new Map<string, GenerationJobSnapshot>();
 
 type ApiErrorStage = "generate" | "model" | "parse" | "write";
+type GenerateApiPayload = Record<string, unknown>;
 
 function initialGenerationProgress(): GenerationDocumentProgress[] {
   return PROJECT_DOCUMENT_DEFINITIONS.map((definition) => ({
@@ -156,7 +160,7 @@ async function waitIfPaused(job: GenerationJobSnapshot): Promise<void> {
   }
 }
 
-function jsonError(error: unknown, stage: ApiErrorStage, status = 400, job?: GenerationJobSnapshot) {
+function errorPayload(error: unknown, stage: ApiErrorStage, status = 400, job?: GenerationJobSnapshot): { payload: GenerateApiPayload; status: number } {
   const message = error instanceof Error ? error.message : String(error || "生成失败。");
   const details = error && typeof error === "object" ? error as { status?: unknown; code?: unknown } : {};
   const errorStatus = typeof details.status === "number" && details.status >= 400 && details.status <= 599 ? details.status : status;
@@ -166,14 +170,55 @@ function jsonError(error: unknown, stage: ApiErrorStage, status = 400, job?: Gen
     finishJob(job);
     updateJob(job, { status: "failed", currentDocument: "生成失败", progress: 0, message });
   }
-  return NextResponse.json({
+  return {
+    status: errorStatus,
+    payload: {
     ok: false,
     success: false,
     error: message,
     errorCode,
     stage,
     job: job ? publicJob(job) : undefined,
-  }, { status: errorStatus });
+    },
+  };
+}
+
+function jsonError(error: unknown, stage: ApiErrorStage, status = 400, job?: GenerationJobSnapshot) {
+  const failure = errorPayload(error, stage, status, job);
+  return NextResponse.json(failure.payload, { status: failure.status });
+}
+
+function eventStreamJsonResponse(work: () => Promise<GenerateApiPayload>): Response {
+  const encoder = new TextEncoder();
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const send = (event: string, payload?: unknown) => {
+        const data = payload === undefined ? "" : `data: ${JSON.stringify(payload)}\n`;
+        controller.enqueue(encoder.encode(`event: ${event}\n${data}\n`));
+      };
+      send("ready", { ok: true });
+      heartbeat = setInterval(() => controller.enqueue(encoder.encode(": keepalive\n\n")), 5_000);
+      void work()
+        .then((payload) => send("result", payload))
+        .catch((error) => send("result", errorPayload(error, "generate", 500).payload))
+        .finally(() => {
+          if (heartbeat) clearInterval(heartbeat);
+          controller.close();
+        });
+    },
+    cancel() {
+      if (heartbeat) clearInterval(heartbeat);
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }
 
 export async function GET(request: Request) {
@@ -248,17 +293,10 @@ export async function PATCH(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
-  let job: GenerationJobSnapshot | undefined;
-  let sourceIdeaId = "";
+async function runGeneration(request: Request, body: Record<string, unknown>, job: GenerationJobSnapshot, sourceIdeaId: string): Promise<GenerateApiPayload> {
   try {
-    assertSameOrigin(request);
-    const body = await readRequestJson(request);
-    const jobId = jobIdFrom(body.jobId);
-    job = createJob(jobId);
-    if (job.cancelled) throw new GenerationCancelledError();
+    const jobId = job.jobId;
     request.signal.addEventListener("abort", () => {
-      if (!job) return;
       job.cancelled = true;
       job.pauseRequested = false;
       releasePausedJob(job);
@@ -270,7 +308,6 @@ export async function POST(request: Request) {
     const profile = resolveContentProfile(body);
     const topic = required(body.topic, "选题主题");
     const projectName = typeof body.projectName === "string" && body.projectName.trim() ? body.projectName.trim() : topic;
-    sourceIdeaId = typeof body.ideaId === "string" ? body.ideaId.trim() : "";
     const input: GenerateInput = {
       projectName,
       topic,
@@ -324,16 +361,29 @@ export async function POST(request: Request) {
             ? `${rootFailure.fileName} 生成失败：${rootFailure.validationErrors.join("；")}${blockedCount ? `；另有 ${blockedCount} 份下游文档因此未生成` : ""}`
             : `${result.files.length}/${PROJECT_DOCUMENT_DEFINITIONS.length} 份核心工作稿可用。`,
     });
-    return NextResponse.json({ ok: true, success: true, job: publicJob(job), ...result });
+    return { ok: true, success: true, job: publicJob(job), ...result };
   } catch (error) {
     if (error instanceof GenerationCancelledError) {
-      if (job) finishJob(job);
-      if (job) updateJob(job, { status: "cancelled", currentDocument: "已撤销", progress: 0, message: "已撤销生成，本地临时文件已清理。" });
-      return NextResponse.json({ ok: false, success: false, cancelled: true, error: "已撤销生成，本地临时文件已清理。", stage: "generate", job: job ? publicJob(job) : undefined }, { status: 499 });
+      finishJob(job);
+      updateJob(job, { status: "cancelled", currentDocument: "已撤销", progress: 0, message: "已撤销生成，本地临时文件已清理。" });
+      return { ok: false, success: false, cancelled: true, error: "已撤销生成，本地临时文件已清理。", stage: "generate", job: publicJob(job) };
     }
     if (error instanceof GenerationStageError) {
-      return jsonError(error, error.stage, 400, job);
+      return errorPayload(error, error.stage, 400, job).payload;
     }
-    return jsonError(error, "generate", 400, job);
+    return errorPayload(error, "generate", 400, job).payload;
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    assertSameOrigin(request);
+    const body = await readRequestJson(request);
+    const job = createJob(jobIdFrom(body.jobId));
+    if (job.cancelled) throw new GenerationCancelledError();
+    const sourceIdeaId = typeof body.ideaId === "string" ? body.ideaId.trim() : "";
+    return eventStreamJsonResponse(() => runGeneration(request, body, job, sourceIdeaId));
+  } catch (error) {
+    return jsonError(error, "generate", 400);
   }
 }

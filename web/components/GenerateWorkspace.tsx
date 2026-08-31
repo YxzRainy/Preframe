@@ -13,7 +13,7 @@ import {
   type GenerationUiStatus,
 } from "./GenerationProgressModal";
 import { formatDuration } from "../../src/utils/generationTiming";
-import { ApiPayloadError, readJsonResponse } from "../lib/readJsonResponse";
+import { ApiPayloadError, readEventStreamJsonResponse, readJsonResponse } from "../lib/readJsonResponse";
 import { ModelConfigModal } from "./ModelConfigModal";
 import { PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinitions";
 
@@ -343,7 +343,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
     window.dispatchEvent(new CustomEvent("piance-current-project", { detail: { title: pendingName, status: "创建项目目录", tone: "working" } }));
     try {
       const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, jobId, ideaId: sourceIdeaId || undefined }), signal: abortController.signal });
-      const data = await readJsonResponse<GenerateResponse>(response);
+      const data = await readEventStreamJsonResponse<GenerateResponse>(response);
       if (cancelledJobIdRef.current === jobId || data.cancelled) return;
       if (data.job) {
         setGenerationJob(data.job);

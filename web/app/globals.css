@@ -14815,3 +14815,21 @@ body:has(.create-project-sheet) .modal-overlay {
     transition: none;
   }
 }
+
+/* The dark composer keeps a warm-paper primary action. Its label must use ink,
+   not inverted white, and the disabled state must remain readable. */
+[data-theme="dark"] .create-project-sheet .modal-footer .create-project-submit,
+[data-theme="dark"] .create-project-sheet .modal-footer .create-project-submit:hover:not(:disabled),
+[data-theme="dark"] .create-project-sheet .modal-footer .create-project-submit:focus-visible {
+  color: #25231e !important;
+  text-shadow: none;
+}
+[data-theme="dark"] .create-project-sheet .modal-footer .create-project-submit:disabled {
+  opacity: 1;
+  border-color: #8e826f !important;
+  color: #353129 !important;
+  background: #aa9c87 !important;
+}
+[data-theme="dark"] .create-project-sheet .modal-footer .create-project-submit span {
+  color: inherit !important;
+}
