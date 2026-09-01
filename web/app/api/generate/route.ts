@@ -16,7 +16,7 @@ import type { GenerationModelCallRecord } from "../../../../src/services/documen
 import { markIdeaConverted } from "../../../../src/services/ideaManager";
 import { runWithWebModelAccess } from "../../../lib/model-access";
 import { getWebModelAccess } from "../../../../src/services/webModelAccess";
-import { assertSameOrigin, readRequestJson } from "../_utils";
+import { assertSameOrigin, publicRequestOrigin, readRequestJson } from "../_utils";
 import {
   getPersistedGenerationJob,
   publicPersistedGenerationJob,
@@ -84,18 +84,17 @@ function persistedJob(jobId: string, body: Record<string, unknown>, sourceIdeaId
     updatedAt: startedAt,
     payload: body,
     sourceIdeaId: sourceIdeaId || undefined,
+    dispatchToken: crypto.randomUUID(),
   };
 }
 
-async function dispatchNetlifyBackgroundJob(request: Request, jobId: string, apiKey: string): Promise<void> {
-  const token = process.env.PIANCE_BACKGROUND_DISPATCH_TOKEN?.trim();
-  if (!token) throw new Error("Netlify 生成尚未配置 PIANCE_BACKGROUND_DISPATCH_TOKEN。");
-  const endpoint = new URL("/.netlify/functions/generate-project", request.url);
+async function dispatchNetlifyBackgroundJob(request: Request, jobId: string, apiKey: string, dispatchToken: string): Promise<void> {
+  const endpoint = new URL("/.netlify/functions/generate-project-background", publicRequestOrigin(request));
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-piance-dispatch-token": token,
+      "x-piance-dispatch-token": dispatchToken,
       // The user-owned key stays in this short-lived internal request. It is
       // deliberately never added to the Blob-backed job record.
       "x-piance-model-key": apiKey,
@@ -480,10 +479,11 @@ export async function POST(request: Request) {
       const job = persistedJob(jobId, body, sourceIdeaId);
       await putPersistedGenerationJob(job);
       try {
-        await dispatchNetlifyBackgroundJob(request, jobId, access.config.apiKey);
+        await dispatchNetlifyBackgroundJob(request, jobId, access.config.apiKey, job.dispatchToken!);
       } catch (error) {
         const failedAt = new Date().toISOString();
         job.status = "failed";
+        job.dispatchToken = undefined;
         job.currentDocument = "任务派发失败";
         job.message = error instanceof Error ? error.message : String(error);
         job.endedAt = failedAt;

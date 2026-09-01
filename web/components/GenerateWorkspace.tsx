@@ -67,7 +67,7 @@ const emptyJob: GenerationJobView = { jobId: "", status: "idle", currentDocument
 
 function generationErrorMessage(error: unknown): string {
   if (error instanceof ApiPayloadError) {
-    return "生成失败：接口返回了非 JSON 内容。请检查 API 配置、模型服务或服务端日志。";
+    return error.message;
   }
   return error instanceof Error ? error.message : "生成失败，请稍后重试。";
 }

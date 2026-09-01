@@ -13,19 +13,20 @@ export class RequestSecurityError extends Error {
   }
 }
 
-export function assertSameOrigin(request: Request): void {
-  const origin = request.headers.get("origin");
-  if (!origin) return;
-
+export function publicRequestOrigin(request: Request): string {
   const requestUrl = new URL(request.url);
-  const allowedOrigins = new Set([requestUrl.origin]);
   const forwardedHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
   const host = forwardedHost || request.headers.get("host")?.trim();
   const forwardedProtocol = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
   const protocol = forwardedProtocol === "http" || forwardedProtocol === "https" ? forwardedProtocol : requestUrl.protocol.slice(0, -1);
-  if (host) allowedOrigins.add(`${protocol}://${host}`);
+  return host ? `${protocol}://${host}` : requestUrl.origin;
+}
 
-  if (!allowedOrigins.has(origin)) throw new RequestSecurityError();
+export function assertSameOrigin(request: Request): void {
+  const origin = request.headers.get("origin");
+  if (!origin) return;
+  const requestOrigin = new URL(request.url).origin;
+  if (origin !== requestOrigin && origin !== publicRequestOrigin(request)) throw new RequestSecurityError();
 }
 
 export function apiError(error: unknown, stage: ApiStage, fallback: string, status = 400) {

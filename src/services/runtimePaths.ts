@@ -2,7 +2,7 @@ import os from "node:os";
 import path from "node:path";
 
 function isServerlessRuntime(): boolean {
-  return Boolean(process.env.NETLIFY || process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  return Boolean(process.env.SITE_ID || process.env.NETLIFY || process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
 }
 
 /** Writable storage root. Serverless hosts only expose a writable temporary directory. */

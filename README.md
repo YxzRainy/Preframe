@@ -62,16 +62,9 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 
 生产部署使用 Netlify Background Function 执行生成任务：创建请求会立即返回任务 ID，浏览器轮询进度；后台任务最多可运行 15 分钟。任务状态和生成完成的项目文件写入站点级 Netlify Blobs，因此不会因函数冷启动丢失。
 
-在 Netlify 项目环境变量中设置：
+Netlify 无需额外配置后台任务密钥。每个生成任务会自动创建一次性内部派发令牌；用户自己的 DeepSeek Key 仍保存在浏览器 HttpOnly Cookie 中，派发时只经内部请求头临时传给后台函数，不会写入 Blobs、项目文件或日志。可选的 `DEEPSEEK_BASE_URL` 默认使用 `https://api.deepseek.com/v1`。
 
-```env
-PIANCE_BACKGROUND_DISPATCH_TOKEN=使用密码管理器生成的长随机字符串
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
-```
-
-`PIANCE_BACKGROUND_DISPATCH_TOKEN` 只用于 API Route 内部派发后台任务，绝不能以 `NEXT_PUBLIC_` 前缀暴露。用户自己的 DeepSeek Key 仍保存在浏览器 HttpOnly Cookie 中；派发时只经内部请求头临时传给后台函数，不会写入 Blobs、项目文件或日志。
-
-部署后提交一次生成任务，Netlify 的 Functions 日志中应能看到 `generate-project`；在任务完成后，打开“历史项目”或项目详情会从 Blobs 恢复该项目到当前函数的临时工作目录。文档编辑与 AI 改写会在处理前恢复、处理后重新保存到 Blobs。
+部署后提交一次生成任务，Netlify 的 Functions 日志中应能看到 `generate-project-background`；在任务完成后，打开“历史项目”或项目详情会从 Blobs 恢复该项目到当前函数的临时工作目录。文档编辑与 AI 改写会在处理前恢复、处理后重新保存到 Blobs。
 
 ## 本地数据边界
 

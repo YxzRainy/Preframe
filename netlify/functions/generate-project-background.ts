@@ -10,13 +10,14 @@ import type { GenerateInput } from "../../src/prompts/generatePrompt.js";
 import path from "node:path";
 import { getOutputDir } from "../../src/services/workspaceConfig.js";
 
-export const config: Config = { background: true, path: "/.netlify/functions/generate-project" };
+export const config: Config = { background: true };
 
 function initialJobError(job: PersistedGenerationJob, error: unknown): PersistedGenerationJob {
   const message = error instanceof Error ? error.message : String(error || "生成失败。");
   const endedAt = new Date().toISOString();
   return {
     ...job,
+    dispatchToken: undefined,
     status: job.cancelled ? "cancelled" : "failed",
     currentDocument: job.cancelled ? "已撤销" : "生成失败",
     progress: job.cancelled ? 0 : job.progress,
@@ -48,11 +49,10 @@ function inputFrom(job: PersistedGenerationJob): GenerateInput {
 
 export default async function generateProjectInBackground(request: Request): Promise<void> {
   const token = request.headers.get("x-piance-dispatch-token") || "";
-  if (!process.env.PIANCE_BACKGROUND_DISPATCH_TOKEN || token !== process.env.PIANCE_BACKGROUND_DISPATCH_TOKEN) return;
   const { jobId } = await request.json().catch(() => ({})) as { jobId?: unknown };
   if (typeof jobId !== "string") return;
   let job = await getPersistedGenerationJob(jobId);
-  if (!job || job.cancelled || job.status === "completed") return;
+  if (!job || !job.dispatchToken || token !== job.dispatchToken || job.cancelled || job.status === "completed") return;
   const apiKey = request.headers.get("x-piance-model-key") || "";
   if (!apiKey) {
     await putPersistedGenerationJob(initialJobError(job, new Error("生成密钥未随内部任务派发，请重新发起生成。")));
@@ -110,6 +110,7 @@ export default async function generateProjectInBackground(request: Request): Pro
     const endedAt = new Date().toISOString();
     await save((current) => ({
       ...current,
+      dispatchToken: undefined,
       status: result.status === "complete" ? "completed" : result.status,
       currentDocument: result.status === "complete" ? "03_发布与复盘.md" : "生成已结束",
       progress: Math.round((result.files.length / 3) * 100),

@@ -1,1 +1,0 @@
-globalThis.__RSC_MANIFEST=(globalThis.__RSC_MANIFEST||{});globalThis.__RSC_MANIFEST["/api/cover/prompt/route"]={"moduleLoading":{"prefix":"/_next/"},"ssrModuleMapping":{},"edgeSSRModuleMapping":{},"clientModules":{},"entryCSSFiles":{"/Users/YxzRainy/Documents/Vibecoding/Preframe/web/app/api/cover/prompt/route":[]},"rscModuleMapping":{},"edgeRscModuleMapping":{}};

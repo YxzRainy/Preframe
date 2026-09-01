@@ -23,6 +23,7 @@ export interface PersistedGenerationJob {
   updatedAt: string;
   payload: Record<string, unknown>;
   sourceIdeaId?: string;
+  dispatchToken?: string;
   result?: Record<string, unknown>;
 }
 
@@ -32,7 +33,7 @@ const PROJECT_PREFIX = "projects/";
 const PROJECT_INDEX_PREFIX = "project-index/";
 
 export function usesNetlifyPersistentGeneration(): boolean {
-  return Boolean(process.env.NETLIFY || process.env.NETLIFY_SITE_ID);
+  return Boolean(process.env.SITE_ID || process.env.NETLIFY || process.env.NETLIFY_SITE_ID);
 }
 
 function store() {
@@ -67,7 +68,7 @@ export async function updatePersistedGenerationJob(
 }
 
 export function publicPersistedGenerationJob(job: PersistedGenerationJob) {
-  const { payload: _payload, sourceIdeaId: _sourceIdeaId, cancelled: _cancelled, pauseRequested: _pauseRequested, resumeStatus: _resumeStatus, result, ...publicJob } = job;
+  const { payload: _payload, sourceIdeaId: _sourceIdeaId, dispatchToken: _dispatchToken, cancelled: _cancelled, pauseRequested: _pauseRequested, resumeStatus: _resumeStatus, result, ...publicJob } = job;
   const { status: resultStatus, ...resultFields } = result || {};
   return { ...publicJob, ...resultFields, ...(resultStatus ? { resultStatus } : {}) };
 }

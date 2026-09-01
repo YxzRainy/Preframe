@@ -1,1 +1,0 @@
-globalThis.__RSC_MANIFEST=(globalThis.__RSC_MANIFEST||{});globalThis.__RSC_MANIFEST["/api/media/pick-directory/route"]={"moduleLoading":{"prefix":"/_next/"},"ssrModuleMapping":{},"edgeSSRModuleMapping":{},"clientModules":{},"entryCSSFiles":{"/Users/YxzRainy/Documents/Vibecoding/Preframe/web/app/api/media/pick-directory/route":[]},"rscModuleMapping":{},"edgeRscModuleMapping":{}};

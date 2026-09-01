@@ -1,6 +1,7 @@
 node_modules/
 dist/
 web/.next/
+.netlify/
 
 # 生成内容默认不提交，仅保留目录
 output/*

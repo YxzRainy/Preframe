@@ -7,6 +7,8 @@ import { callModel, modelConfigFromInput, withModelConfig, type ModelConfig } fr
 import { getWebModelAccess, WEB_MODEL_COOKIE, WEB_MODEL_NAME, WebModelAccessError } from "../services/webModelAccess.js";
 import { clearDeepSeekApiKey, localEnvPath, saveDeepSeekApiKey } from "../services/envFile.js";
 import { getWorkspaceStats } from "../services/workspaceConfig.js";
+import { publicPersistedGenerationJob, usesNetlifyPersistentGeneration, type PersistedGenerationJob } from "../services/netlifyGenerationStore.js";
+import { publicRequestOrigin } from "../../web/app/api/_utils.js";
 
 function config(apiKey: string): ModelConfig {
   return {
@@ -134,15 +136,49 @@ test("DeepSeek Key 只写入指定的本机 .env 文件并使用私有权限", a
 });
 
 
+test("后台任务派发使用代理转发后的公开站点地址", () => {
+  const request = new Request("http://127.0.0.1:3010/api/generate", {
+    headers: { "x-forwarded-host": "example.netlify.app", "x-forwarded-proto": "https" },
+  });
+  assert.equal(publicRequestOrigin(request), "https://example.netlify.app");
+});
+
+test("后台任务的内部派发令牌不会返回浏览器", () => {
+  const job = {
+    jobId: "job-test", status: "creating", currentDocument: "", progress: 0, message: "",
+    cancelled: false, pauseRequested: false, timings: [], modelCalls: [], generationProgress: [],
+    startedAt: "", updatedAt: "", payload: {}, dispatchToken: "internal-secret",
+  } satisfies PersistedGenerationJob;
+  assert.equal("dispatchToken" in publicPersistedGenerationJob(job), false);
+});
+
+test("Netlify Functions 运行时通过 SITE_ID 启用持久化后台生成", () => {
+  const previous = {
+    siteId: process.env.SITE_ID,
+    netlify: process.env.NETLIFY,
+    legacySiteId: process.env.NETLIFY_SITE_ID,
+  };
+  delete process.env.NETLIFY;
+  delete process.env.NETLIFY_SITE_ID;
+  process.env.SITE_ID = "test-site-id";
+  try {
+    assert.equal(usesNetlifyPersistentGeneration(), true);
+  } finally {
+    if (previous.siteId === undefined) delete process.env.SITE_ID; else process.env.SITE_ID = previous.siteId;
+    if (previous.netlify === undefined) delete process.env.NETLIFY; else process.env.NETLIFY = previous.netlify;
+    if (previous.legacySiteId === undefined) delete process.env.NETLIFY_SITE_ID; else process.env.NETLIFY_SITE_ID = previous.legacySiteId;
+  }
+});
+
 test("托管运行环境从可写数据目录创建工作区和 .env", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "preframe-serverless-"));
   const previous = {
-    netlify: process.env.NETLIFY,
+    siteId: process.env.SITE_ID,
     dataDir: process.env.PIANCE_DATA_DIR,
     outputDir: process.env.PIANCE_OUTPUT_DIR,
     envFile: process.env.PIANCE_ENV_FILE,
   };
-  process.env.NETLIFY = "true";
+  process.env.SITE_ID = "test-site-id";
   process.env.PIANCE_DATA_DIR = directory;
   delete process.env.PIANCE_OUTPUT_DIR;
   delete process.env.PIANCE_ENV_FILE;
@@ -151,7 +187,7 @@ test("托管运行环境从可写数据目录创建工作区和 .env", async () 
     assert.equal(workspace.outputDirAbsolute, path.join(directory, "output"));
     assert.equal(localEnvPath(), path.join(directory, ".env"));
   } finally {
-    if (previous.netlify === undefined) delete process.env.NETLIFY; else process.env.NETLIFY = previous.netlify;
+    if (previous.siteId === undefined) delete process.env.SITE_ID; else process.env.SITE_ID = previous.siteId;
     if (previous.dataDir === undefined) delete process.env.PIANCE_DATA_DIR; else process.env.PIANCE_DATA_DIR = previous.dataDir;
     if (previous.outputDir === undefined) delete process.env.PIANCE_OUTPUT_DIR; else process.env.PIANCE_OUTPUT_DIR = previous.outputDir;
     if (previous.envFile === undefined) delete process.env.PIANCE_ENV_FILE; else process.env.PIANCE_ENV_FILE = previous.envFile;
