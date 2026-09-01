@@ -12,6 +12,7 @@ export interface NewTaskFormData {
   style: string;
   targetUser: string;
   extra: string;
+  referenceMaterials: string;
 }
 
 const PLATFORM_OPTIONS = ["自动判断", "小红书", "抖音", "视频号"] as const;
@@ -104,6 +105,23 @@ export function NewTaskDrawer({ open, form, loading, error, errorTitle = "生成
             </button>
           </div>
         </section>
+
+        <label className="create-reference-materials">
+          <div className="create-reference-materials-heading">
+            <div>
+              <span>参考材料 <em>可选</em></span>
+              <small>有原稿、数据、链接或必须沿用的素材时，直接贴在这里。</small>
+            </div>
+            <small>{form.referenceMaterials.trim() ? `${form.referenceMaterials.trim().length} 字` : "没有也可以直接生成"}</small>
+          </div>
+          <textarea
+            rows={3}
+            maxLength={40000}
+            value={form.referenceMaterials}
+            onChange={(event) => onChange("referenceMaterials", event.target.value)}
+            placeholder="例如：已有文案、访谈摘录、真实数据、资料链接或需要引用的原话。片策会把它作为本项目的生成依据。"
+          />
+        </label>
 
         <div
           className={`create-preferences-reveal ${preferencesOpen ? "is-open" : ""}`}

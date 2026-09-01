@@ -15,7 +15,16 @@ import { formatDuration } from "../../../../src/utils/generationTiming";
 import type { GenerationModelCallRecord } from "../../../../src/services/documentGeneration";
 import { markIdeaConverted } from "../../../../src/services/ideaManager";
 import { runWithWebModelAccess } from "../../../lib/model-access";
+import { getWebModelAccess } from "../../../../src/services/webModelAccess";
 import { assertSameOrigin, readRequestJson } from "../_utils";
+import {
+  getPersistedGenerationJob,
+  publicPersistedGenerationJob,
+  putPersistedGenerationJob,
+  updatePersistedGenerationJob,
+  usesNetlifyPersistentGeneration,
+  type PersistedGenerationJob,
+} from "../../../../src/services/netlifyGenerationStore";
 
 export const runtime = "nodejs";
 // Supported hosts such as Vercel use this upper bound; hosts that ignore it
@@ -58,6 +67,44 @@ function initialGenerationProgress(): GenerationDocumentProgress[] {
   }));
 }
 
+function persistedJob(jobId: string, body: Record<string, unknown>, sourceIdeaId: string): PersistedGenerationJob {
+  const startedAt = new Date().toISOString();
+  return {
+    jobId,
+    status: "creating",
+    currentDocument: "创建项目任务",
+    progress: 0,
+    message: "任务已进入后台队列。",
+    cancelled: false,
+    pauseRequested: false,
+    timings: [],
+    modelCalls: [],
+    generationProgress: initialGenerationProgress(),
+    startedAt,
+    updatedAt: startedAt,
+    payload: body,
+    sourceIdeaId: sourceIdeaId || undefined,
+  };
+}
+
+async function dispatchNetlifyBackgroundJob(request: Request, jobId: string, apiKey: string): Promise<void> {
+  const token = process.env.PIANCE_BACKGROUND_DISPATCH_TOKEN?.trim();
+  if (!token) throw new Error("Netlify 生成尚未配置 PIANCE_BACKGROUND_DISPATCH_TOKEN。");
+  const endpoint = new URL("/.netlify/functions/generate-project", request.url);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-piance-dispatch-token": token,
+      // The user-owned key stays in this short-lived internal request. It is
+      // deliberately never added to the Blob-backed job record.
+      "x-piance-model-key": apiKey,
+    },
+    body: JSON.stringify({ jobId }),
+  });
+  if (response.status !== 202) throw new Error(`后台任务派发失败（HTTP ${response.status}）。`);
+}
+
 function required(value: unknown, label: string): string {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${label}不能为空。`);
   return value.trim();
@@ -67,6 +114,13 @@ function preference(value: unknown, automaticValue: string): string {
   if (typeof value !== "string" || !value.trim()) return automaticValue;
   const normalized = value.trim();
   return /^(?:自动|自动判断|自动匹配)$/u.test(normalized) ? automaticValue : normalized;
+}
+
+function optionalReferenceMaterials(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const normalized = value.trim();
+  if (normalized.length > 40_000) throw new Error("参考材料不能超过 40,000 字符。");
+  return normalized;
 }
 
 function jobIdFrom(value: unknown): string {
@@ -224,6 +278,10 @@ function eventStreamJsonResponse(work: () => Promise<GenerateApiPayload>): Respo
 export async function GET(request: Request) {
   try {
     const jobId = new URL(request.url).searchParams.get("jobId") || "";
+    if (usesNetlifyPersistentGeneration()) {
+      const job = await getPersistedGenerationJob(jobId);
+      return NextResponse.json({ ok: true, success: true, job: job ? publicPersistedGenerationJob(job) : { jobId, status: "idle", currentDocument: "", progress: 0, message: "", timings: [], modelCalls: [], generationProgress: initialGenerationProgress(), startedAt: "" } });
+    }
     const job = jobs.get(jobId);
     if (!job) {
       return NextResponse.json({ ok: true, success: true, job: { jobId, status: "idle", currentDocument: "", progress: 0, message: "", timings: [], modelCalls: [], generationProgress: initialGenerationProgress(), startedAt: "" } });
@@ -237,6 +295,25 @@ export async function GET(request: Request) {
 export async function DELETE(request: Request) {
   try {
     const jobId = new URL(request.url).searchParams.get("jobId") || "";
+    if (usesNetlifyPersistentGeneration()) {
+      const job = await updatePersistedGenerationJob(jobId, (current) => {
+        const endedAt = new Date().toISOString();
+        return {
+          ...current,
+          cancelled: true,
+          pauseRequested: false,
+          status: "cancelled",
+          currentDocument: "已撤销",
+          progress: 0,
+          message: "已撤销生成。",
+          endedAt,
+          durationMs: Math.max(0, Date.parse(endedAt) - Date.parse(current.startedAt)),
+          durationLabel: formatDuration(Math.max(0, Date.parse(endedAt) - Date.parse(current.startedAt))),
+        };
+      });
+      if (!job) return jsonError(new Error("生成任务不存在或已过期。"), "generate", 404);
+      return NextResponse.json({ ok: true, success: true, cancelled: true, job: publicPersistedGenerationJob(job) });
+    }
     const job = jobs.get(jobId);
     if (!job) {
       const cancelled = createJob(jobId || crypto.randomUUID());
@@ -270,6 +347,21 @@ export async function PATCH(request: Request) {
     const body = await readRequestJson(request);
     const jobId = typeof body.jobId === "string" ? body.jobId : "";
     const action = body.action;
+    if (usesNetlifyPersistentGeneration()) {
+      const job = await updatePersistedGenerationJob(jobId, (current) => {
+        if (["partial", "completed", "cancelled", "failed"].includes(current.status)) throw new Error("当前任务已经结束，无法修改状态。");
+        if (action === "pause") {
+          return { ...current, pauseRequested: true, resumeStatus: current.status, status: "paused", message: "当前模型请求完成后暂停，不会开始下一份文档。" };
+        }
+        if (action === "resume") {
+          const status = current.resumeStatus && current.resumeStatus !== "paused" ? current.resumeStatus : "generatingCore";
+          return { ...current, pauseRequested: false, status, message: "任务已恢复。" };
+        }
+        throw new Error("不支持的任务操作。");
+      });
+      if (!job) return jsonError(new Error("生成任务不存在或已过期。"), "generate", 404);
+      return NextResponse.json({ ok: true, success: true, job: publicPersistedGenerationJob(job) });
+    }
     const job = jobs.get(jobId);
     if (!job) return jsonError(new Error("生成任务不存在或服务已重启。"), "generate", 404);
     if (["partial", "completed", "cancelled", "failed"].includes(job.status)) {
@@ -317,6 +409,7 @@ async function runGeneration(request: Request, body: Record<string, unknown>, jo
       style: preference(body.style, "请结合选题与账号记忆自动匹配自然、具体的表达方式"),
       targetAudience: preference(body.targetUser, "请结合选题与账号记忆自动推断最相关的目标用户"),
       extraRequirements: typeof body.extra === "string" ? body.extra.trim() : "",
+      referenceMaterials: optionalReferenceMaterials(body.referenceMaterials),
     };
     const activeJob = job;
     const result = await runWithWebModelAccess(request, () => generateProject(input, {
@@ -379,6 +472,28 @@ export async function POST(request: Request) {
   try {
     assertSameOrigin(request);
     const body = await readRequestJson(request);
+    if (usesNetlifyPersistentGeneration()) {
+      // Keep the same browser-cookie validation used by local generation.
+      const access = getWebModelAccess(request);
+      const jobId = jobIdFrom(body.jobId);
+      const sourceIdeaId = typeof body.ideaId === "string" ? body.ideaId.trim() : "";
+      const job = persistedJob(jobId, body, sourceIdeaId);
+      await putPersistedGenerationJob(job);
+      try {
+        await dispatchNetlifyBackgroundJob(request, jobId, access.config.apiKey);
+      } catch (error) {
+        const failedAt = new Date().toISOString();
+        job.status = "failed";
+        job.currentDocument = "任务派发失败";
+        job.message = error instanceof Error ? error.message : String(error);
+        job.endedAt = failedAt;
+        job.durationMs = Math.max(0, Date.parse(failedAt) - Date.parse(job.startedAt));
+        job.durationLabel = formatDuration(job.durationMs);
+        await putPersistedGenerationJob(job);
+        throw error;
+      }
+      return NextResponse.json({ ok: true, success: true, accepted: true, job: publicPersistedGenerationJob(job) }, { status: 202 });
+    }
     const job = createJob(jobIdFrom(body.jobId));
     if (job.cancelled) throw new GenerationCancelledError();
     const sourceIdeaId = typeof body.ideaId === "string" ? body.ideaId.trim() : "";

@@ -404,6 +404,26 @@ test("模型返回裸 Markdown 时仍可校验并保存", async () => {
   assert.equal(result.repaired, false);
 });
 
+test("模型漏掉一级标题时本地规范化为当前文档标题", async () => {
+  const markdownWithoutTitle = validOverviewContent().replace(/^# 创作简报\n\n/u, "");
+  const result = await generateValidatedDocument({
+    definition: def01,
+    input,
+    brief: {
+      ...input,
+      extraRequirements: "无",
+      coreViewpoint: "测试选题需要具体执行",
+      contentStructure: "问题、判断、步骤、边界",
+      riskBoundaries: "不编造事实",
+    },
+    modelCall: async () => JSON.stringify({ content: markdownWithoutTitle }),
+  });
+
+  assert.equal(result.repaired, false);
+  assert.match(result.content || "", /^# 创作简报\n/u);
+  assert.deepEqual(validateDocument(result.content || "", def01, input), []);
+});
+
 test("无法解析的模型响应会完整保留在失败记录中", async () => {
   const raw = "这是一段没有文档标题、也不是 JSON 的异常输出";
   const records: Array<{ rawOutput?: string; failureKind?: string }> = [];
@@ -753,7 +773,7 @@ test("Anthropic 截断响应记录指标并分类为 length", async () => {
   }
 });
 
-test("DeepSeek V4 Flash 使用 low 思考强度和配置的输出预算", async () => {
+test("DeepSeek V4 Flash 使用 low 思考强度并为思考输出提供充足预算", async () => {
   const originalFetch = globalThis.fetch;
   let requestBody: Record<string, unknown> = {};
   globalThis.fetch = async (_input, init) => {
@@ -770,7 +790,7 @@ test("DeepSeek V4 Flash 使用 low 思考强度和配置的输出预算", async 
       apiKey: "test-key",
       model: "deepseek-v4-flash",
       temperature: 0.7,
-      maxTokens: 32768,
+      maxTokens: 8192,
       thinkingMode: "low",
     });
     assert.equal(await client.callChatModel("test"), "OK");

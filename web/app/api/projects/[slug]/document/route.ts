@@ -8,6 +8,7 @@ import { syncProjectDerivedState } from "../../../../../../src/services/projectL
 import { PROJECT_DOCUMENT_DEFINITIONS } from "../../../../../../src/utils/documentDefinitions";
 import { validateDocument } from "../../../../../../src/services/documentGeneration";
 import { apiError, readRequestJson } from "../../../_utils";
+import { hydrateProjectDirectory, persistProjectBySlug, usesNetlifyPersistentGeneration } from "../../../../../../src/services/netlifyGenerationStore";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,7 @@ function assertDocumentName(fileName: string): void {
 export async function PATCH(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   try {
     const { slug } = await params;
+    if (usesNetlifyPersistentGeneration()) await hydrateProjectDirectory(slug);
     const body = await readRequestJson(request);
     const fileName = typeof body.fileName === "string" ? body.fileName : "";
     const content = typeof body.content === "string" ? body.content : undefined;
@@ -65,6 +67,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ sl
     await archiveDocumentVersion(slug, fileName, current, "manual-save");
     await writeMarkdown(target, content);
     await syncProjectDerivedState(slug);
+    if (usesNetlifyPersistentGeneration()) await persistProjectBySlug(slug);
     const saved = await readFile(target, "utf8");
     return NextResponse.json({ ok: true, success: true, content: saved });
   } catch (error) {

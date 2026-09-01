@@ -1,27 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BookOpenText, Check, ImageSquare, Info, ShieldCheck } from "@phosphor-icons/react";
+import { BookOpenText, Check, Info, ShieldCheck } from "@phosphor-icons/react";
 import { readJsonResponse } from "../lib/readJsonResponse";
 
-type BasisKey = "viewpoints" | "facts" | "drafts" | "boundaries" | "visualReferences" | "sources";
+type BasisKey = "viewpoints" | "facts" | "drafts" | "boundaries" | "sources";
 type Basis = Record<BasisKey, string> & { updatedAt?: string };
 
-const EMPTY: Basis = { viewpoints: "", facts: "", drafts: "", boundaries: "", visualReferences: "", sources: "" };
+const EMPTY: Basis = { viewpoints: "", facts: "", drafts: "", boundaries: "", sources: "" };
 const ITEMS: Array<{ key: BasisKey; label: string; prompt: string }> = [
   { key: "viewpoints", label: "观点", prompt: "写下要坚持的判断或立场" },
   { key: "facts", label: "事实", prompt: "记录不可改动的事实、数据或出处" },
   { key: "drafts", label: "已有稿", prompt: "粘贴想保留的段落" },
   { key: "boundaries", label: "禁区", prompt: "写下不要出现的内容" },
-  { key: "visualReferences", label: "视觉参考", prompt: "按需记录封面、B-roll、场景、配色或参考图片路径；简单口播可保持为空" },
   { key: "sources", label: "来源与授权", prompt: "记录事实出处、链接、素材版权、授权范围和需要核实的来源" },
 ];
 
-type BasisMode = "core" | "visual" | "risk";
+type BasisMode = "core" | "risk";
 
 const MODE_KEYS: Record<BasisMode, BasisKey[]> = {
   core: ["viewpoints", "facts", "drafts", "boundaries"],
-  visual: ["visualReferences"],
   risk: ["facts", "sources", "boundaries"],
 };
 
@@ -76,8 +74,8 @@ export function ProjectBasisPanel({ slug, mode = "core" }: { slug: string; mode?
 
   const modeItems = ITEMS.filter((entry) => MODE_KEYS[mode].includes(entry.key));
   const item = (modeItems.find((entry) => entry.key === active) || modeItems[0])!;
-  const title = mode === "visual" ? "视觉参考" : mode === "risk" ? "风险与来源" : "创作参考和约束";
-  const Icon = mode === "visual" ? ImageSquare : mode === "risk" ? ShieldCheck : BookOpenText;
+  const title = mode === "risk" ? "风险与来源" : "创作参考和约束";
+  const Icon = mode === "risk" ? ShieldCheck : BookOpenText;
   return (
     <section className={`basis-panel basis-mode-${mode}`} aria-label={title}>
       <header className="basis-panel-header">

@@ -7,6 +7,7 @@ import {
 } from "./modelClient.js";
 
 export const WEB_MODEL_NAME = "deepseek-v4-flash";
+export const WEB_MODEL_MAX_TOKENS = 32768;
 const DEEPSEEK_PUBLIC_BASE_URL = "https://api.deepseek.com/v1";
 export const WEB_MODEL_COOKIE = "piance-model-key";
 
@@ -38,7 +39,7 @@ function createDeepSeekFlashConfig(apiKey: string, baseURL: string): ModelConfig
     apiKey,
     model: WEB_MODEL_NAME,
     temperature: 0.7,
-    maxTokens: 8192,
+    maxTokens: WEB_MODEL_MAX_TOKENS,
     thinkingMode: "low",
   });
 }
@@ -71,7 +72,7 @@ export function publicWebModelConfig(request?: Request, overrideApiKey?: string)
     baseURL: defaultBaseUrl(),
     model: WEB_MODEL_NAME,
     temperature: 0.7,
-    maxTokens: 8192,
+    maxTokens: WEB_MODEL_MAX_TOKENS,
     thinkingMode: "low",
     maskedApiKey: "",
     configured: Boolean(selected.apiKey),

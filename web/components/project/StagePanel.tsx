@@ -116,7 +116,7 @@ export function StagePanel({ slug }: StagePanelProps) {
       </header>
       {overview && (
         <div className="cockpit-metrics" aria-label="项目完成度">
-          <Metric label="策划文档" value={`${overview.documents.completed ?? 0}/${overview.documents.total ?? 0}`} metric={overview.documents} />
+          <Metric label="方案" value={`${overview.documents.completed ?? 0}/${overview.documents.total ?? 0}`} metric={overview.documents} />
           <Metric label="镜头任务" value={`${overview.shots.completed ?? 0}/${overview.shots.total ?? 0}`} metric={overview.shots} />
           <Metric label="素材匹配" value={`${overview.assets.ready ?? 0}/${overview.assets.total ?? 0}`} metric={overview.assets} />
         </div>

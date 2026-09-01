@@ -12,12 +12,11 @@ export interface ProjectBasisPack {
   facts: string;
   drafts: string;
   boundaries: string;
-  visualReferences: string;
   sources: string;
   updatedAt?: string;
 }
 
-const EMPTY_BASIS: ProjectBasisPack = { viewpoints: "", facts: "", drafts: "", boundaries: "", visualReferences: "", sources: "" };
+const EMPTY_BASIS: ProjectBasisPack = { viewpoints: "", facts: "", drafts: "", boundaries: "", sources: "" };
 
 function normalizedBasis(value: unknown): ProjectBasisPack {
   if (!value || typeof value !== "object" || Array.isArray(value)) return EMPTY_BASIS;
@@ -27,7 +26,6 @@ function normalizedBasis(value: unknown): ProjectBasisPack {
     facts: typeof source.facts === "string" ? source.facts : "",
     drafts: typeof source.drafts === "string" ? source.drafts : "",
     boundaries: typeof source.boundaries === "string" ? source.boundaries : "",
-    visualReferences: typeof source.visualReferences === "string" ? source.visualReferences : "",
     sources: typeof source.sources === "string" ? source.sources : "",
     ...(typeof source.updatedAt === "string" ? { updatedAt: source.updatedAt } : {}),
   };
@@ -59,12 +57,15 @@ export async function PUT(request: Request, { params }: { params: Promise<{ slug
     const { slug } = await params;
     const body = await readRequestJson(request);
     const basis = normalizedBasis(body.basis);
-    for (const value of [basis.viewpoints, basis.facts, basis.drafts, basis.boundaries, basis.visualReferences, basis.sources]) {
+    for (const value of [basis.viewpoints, basis.facts, basis.drafts, basis.boundaries, basis.sources]) {
       if (value.length > 40_000) throw new Error("单项依据不能超过 40,000 字符。");
     }
     const { projectDir, metadata } = await readMetadata(slug);
     const saved = { ...basis, updatedAt: new Date().toISOString() };
-    await writeJsonAtomicPath(path.join(projectDir, "project.json"), { ...metadata, basisPack: saved });
+    const legacyBasis = metadata.basisPack && typeof metadata.basisPack === "object" && !Array.isArray(metadata.basisPack)
+      ? metadata.basisPack as Record<string, unknown>
+      : {};
+    await writeJsonAtomicPath(path.join(projectDir, "project.json"), { ...metadata, basisPack: { ...legacyBasis, ...saved } });
     return NextResponse.json({ ok: true, success: true, basis: saved });
   } catch (error) {
     return apiError(error, "project", "项目依据包保存失败。", 400);

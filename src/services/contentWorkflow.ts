@@ -1,9 +1,9 @@
-import { access, readFile, rm } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import type { GenerateInput } from "../prompts/generatePrompt.js";
 import { documentContext } from "../prompts/enhancePrompt.js";
-import { CORE_PROJECT_DOCUMENT_DEFINITIONS, PROJECT_DOCUMENT_DEFINITIONS, type ProjectDocumentDefinition } from "../utils/documentDefinitions.js";
+import { PROJECT_DOCUMENT_DEFINITIONS, type ProjectDocumentDefinition } from "../utils/documentDefinitions.js";
 import {
   buildRefinePrompt,
   buildRefineRepairPrompt,
@@ -32,12 +32,9 @@ import { resolveContentProfile } from "../utils/contentProfile.js";
 import {
   createProjectBrief,
   generateValidatedDocument,
-  PLACEHOLDER_PHRASES,
   statusRecord,
   reviewCheckpointHasUsableData,
   validateDocument,
-  type DocumentQualityStatus,
-  type DocumentState,
   type DocumentStatusRecord,
   type GenerationModelCallRecord,
   type GeneratedDocumentResult,
@@ -304,6 +301,7 @@ export async function generateProject(input: GenerateInput, options: GeneratePro
       const complete = files.length === PROJECT_DOCUMENT_DEFINITIONS.length;
       await writeJson(path.join(tempDir, "project.json"), {
         ...projectMetadata(resolvedInput, projectName, { startedAt: generationStartedAt, finishedAt, durationMs }, model, accountMemoryMetadata),
+        ...(resolvedInput.referenceMaterials?.trim() ? { basisPack: { referenceMaterials: resolvedInput.referenceMaterials.trim() } } : {}),
         workflowVersion: 2,
         workflowModel: "three-document-single-source",
         projectBrief: brief,
@@ -398,6 +396,7 @@ export async function regenerateProjectDocuments(
     style: typeof metadata.style === "string" ? metadata.style : "专业但通俗",
     targetAudience: typeof metadata.targetAudience === "string" ? metadata.targetAudience : "目标用户",
     extraRequirements: typeof metadata.extraRequirements === "string" ? metadata.extraRequirements : "",
+    referenceMaterials: referenceMaterialsFromMetadata(metadata),
   };
   const deadlineMs = options.deadlineMs ?? PROJECT_GENERATION_DEADLINE_MS;
   const taskSignal = combineModelRequestSignal(options.signal, deadlineMs);
@@ -515,9 +514,16 @@ function referencePackFromMetadata(metadata: Record<string, unknown>): string {
   const pack = metadata.basisPack;
   if (!pack || typeof pack !== "object" || Array.isArray(pack)) return "";
   const source = pack as Record<string, unknown>;
-  const labels: Array<[string, string]> = [["viewpoints", "确认观点"], ["facts", "已知事实"], ["drafts", "已有草稿"], ["boundaries", "禁区与边界"], ["visualReferences", "按需视觉参考"], ["sources", "事实来源与授权"]];
+  const labels: Array<[string, string]> = [["referenceMaterials", "参考材料"], ["viewpoints", "确认观点"], ["facts", "已知事实"], ["drafts", "已有稿"], ["boundaries", "禁区与边界"], ["sources", "事实来源与授权"]];
   return labels.map(([key, label]) => typeof source[key] === "string" && source[key].trim()
     ? `## ${label}\n${source[key].trim().slice(0, 40_000)}` : "").filter(Boolean).join("\n\n");
+}
+
+function referenceMaterialsFromMetadata(metadata: Record<string, unknown>): string {
+  const pack = metadata.basisPack;
+  if (!pack || typeof pack !== "object" || Array.isArray(pack)) return "";
+  const value = (pack as Record<string, unknown>).referenceMaterials;
+  return typeof value === "string" ? value.trim().slice(0, 40_000) : "";
 }
 
 interface ProjectRefineContext {
@@ -559,6 +565,7 @@ async function loadProjectRefineContext(projectSlug: string, filename: string): 
     style: typeof metadata.style === "string" ? metadata.style : "未指定风格",
     targetAudience: typeof metadata.targetAudience === "string" ? metadata.targetAudience : "目标用户",
     extraRequirements: typeof metadata.extraRequirements === "string" ? metadata.extraRequirements : "",
+    referenceMaterials: referenceMaterialsFromMetadata(metadata),
   };
   const otherDocuments: Array<{ name: string; content: string }> = (await Promise.all(PROJECT_DOCUMENT_DEFINITIONS
     .filter((item) => item.filename !== filename)

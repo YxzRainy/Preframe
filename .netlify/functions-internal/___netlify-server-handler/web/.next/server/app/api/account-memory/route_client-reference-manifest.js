@@ -1,0 +1,1 @@
+globalThis.__RSC_MANIFEST=(globalThis.__RSC_MANIFEST||{});globalThis.__RSC_MANIFEST["/api/account-memory/route"]={"moduleLoading":{"prefix":"/_next/"},"ssrModuleMapping":{},"edgeSSRModuleMapping":{},"clientModules":{},"entryCSSFiles":{"/Users/YxzRainy/Documents/Vibecoding/Preframe/web/app/api/account-memory/route":[]},"rscModuleMapping":{},"edgeRscModuleMapping":{}};

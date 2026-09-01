@@ -85,39 +85,6 @@ function parseStoryboardTable(md: string): StoryboardRow[] {
 }
 
 // ---------------------------------------------------------------------------
-// 05 拍摄清单：提取「必拍镜头」列表
-// ---------------------------------------------------------------------------
-
-function parseRequiredShots(md: string): Set<number> {
-  const ids = new Set<number>();
-  const section = md.match(/##\s*必拍镜头([\s\S]*?)(?=\n##|\n$|$)/);
-  if (!section) return ids;
-  const matches = section[1].matchAll(/镜头\s*(\d+)/g);
-  for (const m of matches) ids.add(Number(m[1]));
-  return ids;
-}
-
-function parseShootingAssets(md: string): { equipment: string[]; risks: string[] } {
-  const equipment: string[] = [];
-  const risks: string[] = [];
-  const eqSection = md.match(/##\s*场景设备([\s\S]*?)(?=\n##|\n$|$)/);
-  if (eqSection) {
-    for (const line of eqSection[1].split("\n")) {
-      const trimmed = line.replace(/^[-*]\s*/, "").trim();
-      if (trimmed) equipment.push(trimmed);
-    }
-  }
-  const riskSection = md.match(/##\s*拍摄风险([\s\S]*?)(?=\n##|\n$|$)/);
-  if (riskSection) {
-    for (const line of riskSection[1].split("\n")) {
-      const trimmed = line.replace(/^[-*]\s*/, "").trim();
-      if (trimmed) risks.push(trimmed);
-    }
-  }
-  return { equipment, risks };
-}
-
-// ---------------------------------------------------------------------------
 // 07 视觉参考提示词：提取 AI 生成提示词
 // ---------------------------------------------------------------------------
 
@@ -345,13 +312,10 @@ function buildShotTasksUnsafe(files: ContentFile[]): ShotTask[] {
   const storyboardRows = parseStoryboardTable(doc04);
   if (!storyboardRows.length) return [];
 
-  const doc05 = findFile(files, "05_");
   const doc07 = findFile(files, "07_");
   const doc09 = findFile(files, "09_");
   const doc03 = findFile(files, "03_");
 
-  const requiredFromChecklist = doc05 ? parseRequiredShots(doc05) : new Set<number>();
-  const shootingInfo = doc05 ? parseShootingAssets(doc05) : { equipment: [], risks: [] };
   const visualPrompts = doc07 ? parseVisualPrompts(doc07) : [];
   const executionRows = doc09 ? parseExecutionTable(doc09) : [];
   const narrationSegments = doc03 ? parseNarrationSegments(doc03) : [];

@@ -1,0 +1,1 @@
+globalThis.__RSC_MANIFEST=(globalThis.__RSC_MANIFEST||{});globalThis.__RSC_MANIFEST["/api/ideas/route"]={"moduleLoading":{"prefix":"/_next/"},"ssrModuleMapping":{},"edgeSSRModuleMapping":{},"clientModules":{},"entryCSSFiles":{"/Users/YxzRainy/Documents/Vibecoding/Preframe/web/app/api/ideas/route":[]},"rscModuleMapping":{},"edgeRscModuleMapping":{}};

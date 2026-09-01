@@ -20,7 +20,8 @@ import { PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinition
 
 interface GenerateResponse {
   success: boolean;
-  projectSlug: string;
+  accepted?: boolean;
+  projectSlug?: string;
   projectName?: string;
   files: ResultFile[];
   status?: "complete" | "partial" | "failed";
@@ -40,7 +41,7 @@ interface PublicModelStatus {
   canConfigure: boolean;
 }
 
-const initialForm: NewTaskFormData = { projectName: "", topic: "", platform: "自动判断", contentSubject: "", contentDomain: "", style: "自动匹配", targetUser: "", extra: "" };
+const initialForm: NewTaskFormData = { projectName: "", topic: "", platform: "自动判断", contentSubject: "", contentDomain: "", style: "自动匹配", targetUser: "", extra: "", referenceMaterials: "" };
 const CREATE_PROJECT_DRAFT_KEY = "piance:create-project-draft:v1";
 const MODEL_CONFIGURATION_ERROR_CODES = new Set(["DEFAULT_MODEL_UNAVAILABLE", "CUSTOM_MODEL_UNAVAILABLE"]);
 const TOTAL_DOCUMENTS = PROJECT_DOCUMENT_DEFINITIONS.length;
@@ -174,6 +175,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
           style: typeof draft.style === "string" ? draft.style : initialForm.style,
           targetUser: typeof draft.targetUser === "string" ? draft.targetUser : initialForm.targetUser,
           extra: typeof draft.extra === "string" ? draft.extra : initialForm.extra,
+          referenceMaterials: typeof draft.referenceMaterials === "string" ? draft.referenceMaterials : initialForm.referenceMaterials,
         });
         setDraftSaved(true);
       }
@@ -299,6 +301,32 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
           if (terminalStatuses.has(data.job.status)) {
             active = false;
             if (interval !== undefined) window.clearInterval(interval);
+            const durationLabel = finishGenerationTimer(data.job);
+            if ((data.job.status === "completed" || data.job.status === "partial") && data.job.projectSlug) {
+              const completedFiles = data.job.files || [];
+              const resultStatus = data.job.resultStatus || (data.job.status === "completed" ? "complete" : "partial");
+              setFiles(completedFiles);
+              setProjectSlug(data.job.projectSlug);
+              setActiveName(completedFiles[0]?.name || "");
+              setProjectStatus(resultStatus);
+              setSuccessDurationLabel(durationLabel);
+              setSuccessNotice(resultStatus === "complete");
+              window.localStorage.removeItem(CREATE_PROJECT_DRAFT_KEY);
+              setDraftSaved(false);
+              window.dispatchEvent(new CustomEvent("piance-current-project", { detail: {
+                title: data.job.projectName || form.projectName || form.topic || "内容项目",
+                status: resultStatus === "complete" ? `核心工作稿已生成 · ${completedFiles.length}/${TOTAL_DOCUMENTS} 已完成` : `部分生成 · ${completedFiles.length}/${TOTAL_DOCUMENTS} 可用`,
+                tone: resultStatus === "complete" ? "ready" : "warning",
+                fileCount: completedFiles.length,
+              } }));
+              if (presentation === "modal") router.push(`/projects/${encodeURIComponent(data.job.projectSlug)}`);
+            } else if (data.job.status === "failed") {
+              setErrorTitle("生成未完成");
+              setError(`本次运行：${durationLabel}。${data.job.message || "后台生成失败，请检查服务端日志。"}`);
+              setDrawerOpen(true);
+            }
+            setLoading(false);
+            abortRef.current = null;
           }
         }
       } catch {
@@ -318,7 +346,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
       if (interval !== undefined) window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [generationJob.jobId, loading]);
+  }, [form.projectName, form.topic, generationJob.jobId, loading, presentation, router]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -341,6 +369,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
     setDrawerOpen(false);
     const pendingName = form.projectName || form.topic || "内容项目";
     window.dispatchEvent(new CustomEvent("piance-current-project", { detail: { title: pendingName, status: "创建项目目录", tone: "working" } }));
+    let backgroundAccepted = false;
     try {
       const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, jobId, ideaId: sourceIdeaId || undefined }), signal: abortController.signal });
       const data = await readEventStreamJsonResponse<GenerateResponse>(response);
@@ -354,10 +383,14 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
         failure.code = data.errorCode;
         throw failure;
       }
+      if (data.accepted) {
+        backgroundAccepted = true;
+        return;
+      }
       const durationLabel = finishGenerationTimer(data.job);
       const displayName = data.projectName || form.projectName || form.topic;
       const status = data.status || (data.files.length === TOTAL_DOCUMENTS ? "complete" : data.files.length ? "partial" : "failed");
-      setFiles(data.files); setProjectSlug(data.projectSlug); setActiveName(data.files[0]?.name || ""); setDrawerOpen(false); setSuccessNotice(true);
+      setFiles(data.files); setProjectSlug(data.projectSlug || ""); setActiveName(data.files[0]?.name || ""); setDrawerOpen(false); setSuccessNotice(true);
       setProjectStatus(status);
       setSuccessDurationLabel(durationLabel);
       setGenerationProgress(initialGenerationProgress().map((item) => {
@@ -388,7 +421,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
         tone: status === "complete" ? "ready" : "warning",
         fileCount: data.files.length,
       } }));
-      if (presentation === "modal") router.push(`/projects/${encodeURIComponent(data.projectSlug)}`);
+      if (presentation === "modal" && data.projectSlug) router.push(`/projects/${encodeURIComponent(data.projectSlug)}`);
     } catch (caught) {
       if (cancelledJobIdRef.current === jobId || (caught instanceof DOMException && caught.name === "AbortError")) return;
       const durationLabel = finishGenerationTimer();
@@ -401,7 +434,7 @@ export function GenerateWorkspace({ presentation = "page", openRequest = null, o
       window.dispatchEvent(new CustomEvent("piance-current-project", { detail: { title: "等待创建项目", status: "未创建", tone: "muted" } }));
     }
     finally {
-      if (activeJobIdRef.current === jobId && cancelledJobIdRef.current !== jobId) {
+      if (!backgroundAccepted && activeJobIdRef.current === jobId && cancelledJobIdRef.current !== jobId) {
         setLoading(false);
         abortRef.current = null;
       }

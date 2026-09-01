@@ -10,6 +10,7 @@ import {
 } from "../../src/services/projectStage";
 import type { DashboardData, DashboardProject } from "../components/dashboard/types";
 import { getProjectAdviceContext, projectAdviceHref } from "../../src/services/projectAdvisor";
+import { hydrateAllPersistedProjects, usesNetlifyPersistentGeneration } from "../../src/services/netlifyGenerationStore";
 
 async function readProjectJson(projectDir: string): Promise<Record<string, unknown>> {
   try {
@@ -49,6 +50,7 @@ function resolveStage(metadata: Record<string, unknown>): ProjectStage {
 
 /** Shared by the server-rendered dashboard and its refresh API. */
 export async function loadDashboardData(): Promise<DashboardData> {
+  if (usesNetlifyPersistentGeneration()) await hydrateAllPersistedProjects();
   const [projects, outputDir] = await Promise.all([listProjects(), getOutputDir()]);
   const items: DashboardProject[] = await Promise.all(projects.map(async (project) => {
     const metadata = await readProjectJson(project.path);

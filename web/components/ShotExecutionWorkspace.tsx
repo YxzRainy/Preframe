@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, ArrowsClockwise, CaretDown, CaretLeft, CaretRight, CheckCircle, DotsThree, WarningDiamond } from "@phosphor-icons/react";
+import { ArrowRight, ArrowsClockwise, CaretDown, CaretLeft, CaretRight, CheckCircle, DotsThree, WarningDiamond } from "@phosphor-icons/react";
 import type { ShotTask, ShotTaskStatus } from "../../src/types/shotTask";
 import type { MediaAsset } from "../../src/types/mediaAsset";
 import type { ShootingFeedback } from "../../src/types/shootingFeedback";
@@ -19,7 +19,7 @@ interface ShotExecutionWorkspaceProps {
   slug: string;
   resumeRequested?: boolean;
   onResumeHandled?: () => void;
-  onBackToDocuments?: () => void;
+  onOpenShootingScript?: () => void;
 }
 
 interface BatchSuggestion {
@@ -43,7 +43,7 @@ const STATUS_CLASSES: Record<ShotTaskStatus, string> = {
   done: "status-ready",
 };
 
-export function ShotExecutionWorkspace({ slug, resumeRequested = false, onResumeHandled, onBackToDocuments }: ShotExecutionWorkspaceProps) {
+export function ShotExecutionWorkspace({ slug, resumeRequested = false, onResumeHandled, onOpenShootingScript }: ShotExecutionWorkspaceProps) {
   const [shotTasks, setShotTasks] = useState<ShotTask[]>([]);
   const [selectedId, setSelectedId] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -168,7 +168,7 @@ export function ShotExecutionWorkspace({ slug, resumeRequested = false, onResume
       if (tasks.length > 0) {
         setSelectedId(tasks[0].id);
       }
-      setNotice(`镜头任务重新构建完成，共包含 ${tasks.length} 个镜头。`);
+      setNotice(`已根据拍摄脚本同步 ${tasks.length} 个镜头。`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "重新构建镜头任务失败。");
     } finally {
@@ -266,15 +266,9 @@ export function ShotExecutionWorkspace({ slug, resumeRequested = false, onResume
     <div className="shot-workspace shot-workspace-refined project-surface-enter">
       <header className="shot-topbar shot-refined-topbar">
         <div className="shot-topbar-heading">
-          {onBackToDocuments && (
-            <button type="button" className="shot-project-back" onClick={onBackToDocuments}>
-              <ArrowLeft size={15} weight="bold" />
-              策划
-            </button>
-          )}
           <div className="shot-topbar-title">
-            <h2>拍摄清单</h2>
-            <span>{doneCount}/{totalCount} 完成{reshootCount > 0 ? ` · ${reshootCount} 补拍` : ""}</span>
+            <h2>拍摄现场</h2>
+            <span>清单 · {doneCount}/{totalCount} 完成{reshootCount > 0 ? ` · ${reshootCount} 补拍` : ""}</span>
           </div>
         </div>
 
@@ -288,7 +282,7 @@ export function ShotExecutionWorkspace({ slug, resumeRequested = false, onResume
           <details className="shot-topbar-menu">
             <summary aria-label="更多操作" title="更多操作"><DotsThree size={19} weight="bold" /></summary>
             <button type="button" disabled={rebuilding} onClick={handleRebuild}>
-              {rebuilding ? <span className="spinner dark" /> : <><ArrowsClockwise size={16} weight="bold" />重新构建镜头</>}
+              {rebuilding ? <span className="spinner dark" /> : <><ArrowsClockwise size={16} weight="bold" />同步拍摄脚本</>}
             </button>
           </details>
         </div>
@@ -307,11 +301,9 @@ export function ShotExecutionWorkspace({ slug, resumeRequested = false, onResume
 
           {totalCount === 0 ? (
             <div className="shot-empty-card">
-              <h3>还没有拍摄清单</h3>
-              <p>从拍摄执行稿生成镜头后，这里只保留拍摄时真正需要的信息。</p>
-              <button type="button" className="primary-button inline" disabled={rebuilding} onClick={handleRebuild}>
-                {rebuilding ? <span className="spinner" /> : "生成拍摄清单"}
-              </button>
+              <h3>拍摄脚本里还没有可执行镜头</h3>
+              <p>进入拍摄现场时，系统会自动从拍摄脚本生成清单。补齐镜头表后，这里会自动出现对应镜头。</p>
+              {onOpenShootingScript && <button type="button" className="primary-button inline" onClick={onOpenShootingScript}>查看拍摄脚本</button>}
             </div>
           ) : (
             <div className="shot-plan-layout">

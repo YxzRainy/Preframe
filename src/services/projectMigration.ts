@@ -2,7 +2,7 @@ import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import type { GenerateInput, ProjectBrief } from "../prompts/generatePrompt.js";
 import { documentContext } from "../prompts/enhancePrompt.js";
-import { generateValidatedDocument, createProjectBrief, statusRecord, validateDocument, type DocumentStatusRecord, type GeneratedDocumentResult, type GenerationModelCallRecord } from "./documentGeneration.js";
+import { generateValidatedDocument, createProjectBrief, statusRecord, type DocumentStatusRecord, type GeneratedDocumentResult, type GenerationModelCallRecord } from "./documentGeneration.js";
 import { callModel, combineModelRequestSignal, type CallModelOptions } from "./modelClient.js";
 import { resolveProjectDirectory } from "./projectManager.js";
 import { writeJsonAtomicPath } from "./atomicJson.js";

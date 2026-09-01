@@ -5,6 +5,7 @@ import type { ContentFile } from "./contentWorkflow.js";
 import { resolveContentProfile } from "../utils/contentProfile.js";
 import { PROJECT_DOCUMENT_DEFINITIONS } from "../utils/documentDefinitions.js";
 import { validateDocument } from "./documentGeneration.js";
+import { hydrateAllPersistedProjects, hydrateProjectDirectory, usesNetlifyPersistentGeneration } from "./netlifyGenerationStore.js";
 
 export interface ProjectMetadata {
   projectName?: string;
@@ -75,6 +76,7 @@ async function readMetadata(projectDir: string): Promise<ProjectMetadata> {
 }
 
 export async function readProjects(): Promise<ProjectSummary[]> {
+  if (usesNetlifyPersistentGeneration()) await hydrateAllPersistedProjects();
   const projects = await listProjects();
   const summaries = await Promise.all(projects.map(async (project) => {
     const [metadata, entries, projectStat] = await Promise.all([
@@ -113,6 +115,7 @@ export async function readProjects(): Promise<ProjectSummary[]> {
 }
 
 export async function readProject(slug: string): Promise<ProjectDetail> {
+  if (usesNetlifyPersistentGeneration()) await hydrateProjectDirectory(slug);
   const projectDir = resolveProjectDirectory(slug);
   let entries;
   try {

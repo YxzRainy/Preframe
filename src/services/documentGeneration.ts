@@ -416,6 +416,24 @@ function markdownDocumentFromRaw(raw: string, definition: ProjectDocumentDefinit
   return null;
 }
 
+/**
+ * A missing or slightly malformed top-level title is a mechanical formatting
+ * defect, not a content defect. Normalize it locally so a complete document
+ * is not discarded just because the model omitted one Markdown line.
+ */
+function normalizeDocumentTitle(content: string, definition: ProjectDocumentDefinition): string {
+  const normalized = content.replace(/\r\n?/gu, "\n").trim();
+  const escapedTitle = definition.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (new RegExp(`^#\\s+${escapedTitle}\\s*$`, "mu").test(normalized)) return normalized;
+  const lines = normalized.split("\n");
+  const firstContentLine = lines.findIndex((line) => line.trim());
+  if (firstContentLine >= 0 && /^#\s+/u.test(lines[firstContentLine].trim())) {
+    lines[firstContentLine] = `# ${definition.title}`;
+    return lines.join("\n").trim();
+  }
+  return `# ${definition.title}\n\n${normalized}`;
+}
+
 function parseDocument(raw: string, definition: ProjectDocumentDefinition): string {
   let parseError: unknown;
   try {
@@ -525,7 +543,7 @@ export async function generateValidatedDocument(args: {
       raw = await modelCall(prompt, { signal, onMetrics: (value) => { metrics = value; } });
       receivedResponse = true;
       onState?.("validating");
-      const content = parseDocument(raw, definition);
+      const content = normalizeDocumentTitle(parseDocument(raw, definition), definition);
       lastErrors = validateDocument(content, definition, input, acceptedDocuments, brief);
       const durationMs = Math.round(performance.now() - started);
       if (!lastErrors.length) {

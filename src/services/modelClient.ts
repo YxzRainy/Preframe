@@ -272,8 +272,11 @@ function sanitizeModelError(message: string): string {
 function requestMaxTokens(config: ModelConfig): number {
   // Reasoning-heavy DeepSeek models spend part of max_tokens on hidden
   // reasoning. A 4096-token budget can therefore end with no visible answer.
-  return /deepseek-v4-pro|deepseek-reasoner/iu.test(config.model)
-    ? Math.max(config.maxTokens, 8192)
+  // Flash is also a thinking model when thinking is enabled, so it needs the
+  // same floor; otherwise a long document repair can be consumed entirely by
+  // hidden reasoning before the JSON closes.
+  return /deepseek-v4-(?:flash|pro)|deepseek-reasoner/iu.test(config.model)
+    ? Math.max(config.maxTokens, 32768)
     : config.maxTokens;
 }
 

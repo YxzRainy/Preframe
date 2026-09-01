@@ -29,6 +29,11 @@ export interface GenerationJobView {
   endedAt?: string;
   durationMs?: number;
   durationLabel?: string;
+  projectSlug?: string;
+  projectName?: string;
+  files?: Array<{ name: string; content: string }>;
+  resultStatus?: "complete" | "partial" | "failed";
+  documentsStatus?: Record<string, { generated?: boolean; documentStatus?: string; validationErrors?: string[] }>;
 }
 
 export type GenerationProgressStatus = "waiting" | "generating" | "validating" | "completed" | "repairing" | "failed" | "blocked";

@@ -10,7 +10,6 @@ import { ShotExecutionWorkspace } from "./ShotExecutionWorkspace";
 import { StagePanel } from "./project/StagePanel";
 import { StatusBadge } from "./StatusBadge";
 import { DocumentVersionsPanel } from "./DocumentVersionsPanel";
-import { ProjectBasisPanel } from "./ProjectBasisPanel";
 import { initialMigrationProgress, MigrationProgressModal, type MigrationProgressView } from "./MigrationProgressModal";
 import type { ResultFile } from "./ResultTabs";
 import { isPrimaryProjectDocument, isVisualPromptDocument, PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinitions";
@@ -35,7 +34,7 @@ function detailProjectStatus(fileCount: number, total: number): string {
   return `已打开项目 · ${fileCount}/${total} 可用`;
 }
 
-type ProjectViewMode = "documents" | "execution" | "overview" | "visual" | "risk";
+type ProjectViewMode = "documents" | "execution" | "overview";
 type DocumentStatusView = { generated?: boolean; status?: string; documentStatus?: string; validationErrors?: string[] };
 type MigrationResult = { migrated?: boolean; status?: string; archivedFiles?: string[]; error?: string; errorCode?: string };
 type MigrationRequestError = Error & { errorCode?: string };
@@ -174,7 +173,7 @@ export function ProjectDetailView({ slug }: { slug: string }) {
     const document = params.get("document");
     const resume = params.get("resume") === "1";
     if (document && !project) return;
-    if (v === "execution" || v === "overview" || v === "visual" || v === "risk") {
+    if (v === "execution" || v === "overview") {
       setViewMode(v);
     }
     if (resume) { setViewMode("execution"); setResumeRequested(true); }
@@ -420,7 +419,7 @@ export function ProjectDetailView({ slug }: { slug: string }) {
   return (
     <main className={`project-console mode-${viewMode}${hasAgentPanel ? " has-agent-panel" : ""}`}>
       <MigrationProgressModal open={migrating} progress={migrationProgress} />
-      {viewMode !== "execution" && <ProjectSidebar
+      <ProjectSidebar
         slug={slug}
         projectName={project.name}
         metadata={project.metadata}
@@ -431,7 +430,7 @@ export function ProjectDetailView({ slug }: { slug: string }) {
         onViewModeChange={setViewMode}
         migrating={migrating}
         onMigrate={migrateProject}
-      />}
+      />
       {viewMode === "documents" ? (
         <>
           <DocumentWorkspace
@@ -488,24 +487,13 @@ export function ProjectDetailView({ slug }: { slug: string }) {
           slug={slug}
           resumeRequested={resumeRequested}
           onResumeHandled={() => setResumeRequested(false)}
-          onBackToDocuments={() => setViewMode("documents")}
+          onOpenShootingScript={() => { setActiveName("02_拍摄执行稿.md"); setViewMode("documents"); }}
         />
       ) : viewMode === "overview" ? (
         <section className="project-overview-panel project-surface-enter">
           <StagePanel slug={slug} />
         </section>
-      ) : (
-        <section className="project-optional-workspace project-surface-enter">
-          <header>
-            <span>按需模块</span>
-            <h2>{viewMode === "visual" ? "视觉参考" : "风险与来源"}</h2>
-            <p>{viewMode === "visual"
-              ? "只在确实需要 AI 封面、B-roll、虚拟场景或复杂风格时补充；简单真人口播可以留空。"
-              : "集中记录事实出处、素材授权和表达禁区，作为后续修改与发布前核对依据。"}</p>
-          </header>
-          <ProjectBasisPanel slug={slug} mode={viewMode} />
-        </section>
-      )}
+      ) : null}
     </main>
   );
 }

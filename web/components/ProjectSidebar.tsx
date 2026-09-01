@@ -3,18 +3,21 @@
 import Link from "next/link";
 import {
   ArrowLeft,
-  ChartDonut,
+  Camera,
   FileText,
-  ImageSquare,
-  ShieldCheck,
-  VideoCamera,
+  RocketLaunch,
 } from "@phosphor-icons/react";
 import type { ResultFile } from "./ResultTabs";
 import { StatusBadge } from "./StatusBadge";
-import { resolveContentProfile } from "../../src/utils/contentProfile";
 import { displayDocumentName, isPrimaryProjectDocument, PROJECT_DOCUMENT_DEFINITIONS } from "../../src/utils/documentDefinitions";
 
-type ProjectViewMode = "documents" | "execution" | "overview" | "visual" | "risk";
+type ProjectViewMode = "documents" | "execution" | "overview";
+
+const PLAN_FILE_COPY: Record<string, { title: string; description: string }> = {
+  "01_创作简报.md": { title: "内容方向", description: "目标、观点与表达边界" },
+  "02_拍摄执行稿.md": { title: "拍摄脚本", description: "口播、镜头与素材安排" },
+  "03_发布与复盘.md": { title: "发布计划", description: "标题、文案与数据回收" },
+};
 
 interface ProjectSidebarProps {
   slug: string;
@@ -41,9 +44,12 @@ export function ProjectSidebar({
   migrating = false,
   onMigrate,
 }: ProjectSidebarProps) {
-  const profile = resolveContentProfile(metadata);
-  const contentSubject = profile.contentSubject || "未记录";
   const primaryFiles = files.filter((file) => isPrimaryProjectDocument(file.name) && !/_修改版/u.test(file.name));
+  const visualStage = viewMode === "execution" || (viewMode === "documents" && activeName.startsWith("02_"))
+    ? "shooting"
+    : viewMode === "overview" || (viewMode === "documents" && activeName.startsWith("03_"))
+      ? "progress"
+      : "plan";
   const extraFiles = files.filter((file) => !primaryFiles.includes(file));
   const primaryFilesByName = new Map(primaryFiles.map((file) => [file.name, file]));
   const usesCurrentWorkflow = primaryFiles.some((file) => PROJECT_DOCUMENT_DEFINITIONS.some((definition) => definition.filename === file.name));
@@ -67,11 +73,13 @@ export function ProjectSidebar({
 
   const renderFile = (file: ResultFile) => {
     const meta = displayDocumentName(file.name);
+    const planCopy = PLAN_FILE_COPY[file.name];
     const active = viewMode === "documents" && file.name === activeName;
     return (
       <button
         type="button"
         role="tab"
+        aria-label={planCopy ? `${planCopy.title}：${planCopy.description}` : meta.title}
         aria-selected={active}
         className={active ? "flow-step active" : "flow-step"}
         onClick={() => {
@@ -84,8 +92,8 @@ export function ProjectSidebar({
       >
         <span className="step-node">{meta.number}</span>
         <span className="step-copy">
-          <strong>{meta.title}</strong>
-          {meta.revised && <small>修改版本</small>}
+          <strong>{planCopy?.title || meta.title}</strong>
+          <small>{meta.revised ? "修改版本" : planCopy?.description}</small>
         </span>
       </button>
     );
@@ -95,6 +103,7 @@ export function ProjectSidebar({
     const docStatus = documentsStatus[definition.number];
     const error = docStatus?.validationErrors?.[0];
     const blocked = docStatus?.documentStatus === "blocked";
+    const planCopy = PLAN_FILE_COPY[definition.filename];
     const active = viewMode === "documents" && definition.filename === activeName;
     return (
       <button
@@ -108,13 +117,14 @@ export function ProjectSidebar({
           }
           onSelect(definition.filename);
         }}
+        aria-label={planCopy ? `${planCopy.title}：${planCopy.description}` : definition.title}
         title={error || "文档尚未生成"}
         key={definition.filename}
       >
         <span className="step-node">{definition.number}</span>
         <span className="step-copy">
-          <strong>{definition.title}</strong>
-          <small>{failureReason(docStatus)}</small>
+          <strong>{planCopy?.title || definition.title}</strong>
+          <small>{failureReason(docStatus) || planCopy?.description}</small>
         </span>
         <span className={`step-type ${blocked ? "blocked" : "failed"}`}>{blocked ? "未生成" : "生成失败"}</span>
       </button>
@@ -128,14 +138,13 @@ export function ProjectSidebar({
           <ArrowLeft size={15} weight="bold" />
           返回项目库
         </Link>
-        <section className="project-identity-card">
+        <section className={`project-identity-card is-${projectStatus}`}>
           <div className="project-card-head">
             <StatusBadge tone={isLegacyWorkflow ? "warning" : projectStatus === "complete" ? "ready" : projectStatus === "partial" ? "working" : "muted"}>
-              {isLegacyWorkflow ? "历史项目" : projectStatus === "complete" ? "已完成" : projectStatus === "partial" ? "部分可用" : "待重试"}
+              {isLegacyWorkflow ? "历史项目" : projectStatus === "complete" ? "方案已就绪" : projectStatus === "partial" ? "生成未完成" : "待重新生成"}
             </StatusBadge>
           </div>
           <h1>{projectName}</h1>
-          <p className="project-identity-summary">{contentSubject} · {String(metadata.platform || "平台未记录")}</p>
           {isLegacyWorkflow && onMigrate && (
             <div className="legacy-workflow-notice">
               <p>这是旧版十文档项目。迁移会先归档旧文档，再生成三份新版核心工作稿，不会丢失历史内容。</p>
@@ -146,69 +155,49 @@ export function ProjectSidebar({
           )}
         </section>
 
-        {/* 视图模式平级切换 */}
+        {/* 工作阶段：下方仅展示当前阶段内真正需要完成的内容。 */}
         {onViewModeChange && (
           <div className="workspace-view-switcher">
             <button
               type="button"
-              className={viewMode === "documents" ? "switcher-btn active" : "switcher-btn"}
+              className={visualStage === "plan" ? "switcher-btn active" : "switcher-btn"}
               onClick={() => onViewModeChange("documents")}
             >
-              <FileText size={17} weight={viewMode === "documents" ? "fill" : "regular"} />
-              <span>策划文档</span>
+              <FileText size={17} weight={visualStage === "plan" ? "fill" : "regular"} />
+              <span>方案内容</span>
             </button>
             <button
               type="button"
-              className={viewMode === "execution" ? "switcher-btn active" : "switcher-btn"}
+              className={visualStage === "shooting" ? "switcher-btn active" : "switcher-btn"}
               onClick={() => onViewModeChange("execution")}
             >
-              <VideoCamera size={17} weight={viewMode === "execution" ? "fill" : "regular"} />
-              <span>拍摄执行</span>
+              <Camera size={17} weight={visualStage === "shooting" ? "fill" : "regular"} />
+              <span>拍摄现场</span>
             </button>
             <button
               type="button"
-              className={viewMode === "overview" ? "switcher-btn active" : "switcher-btn"}
+              className={visualStage === "progress" ? "switcher-btn active" : "switcher-btn"}
               onClick={() => onViewModeChange("overview")}
             >
-              <ChartDonut size={17} weight={viewMode === "overview" ? "fill" : "regular"} />
-              <span>阶段与发布</span>
+              <RocketLaunch size={17} weight={visualStage === "progress" ? "fill" : "regular"} />
+              <span>项目进度</span>
             </button>
           </div>
         )}
 
-        <div className="step-flow" role="tablist" aria-label={isLegacyWorkflow ? "历史项目文档" : "新版核心工作稿"}>
+        {usesCurrentWorkflow && (
+          <div className="project-plan-heading">
+            <span>方案内容</span>
+            <small>定方向 · 锁脚本 · 备发布</small>
+          </div>
+        )}
+        <div className="step-flow" role="tablist" aria-label={isLegacyWorkflow ? "历史项目文档" : "方案内容"}>
           {usesCurrentWorkflow
             ? PROJECT_DOCUMENT_DEFINITIONS.map((definition) => primaryFilesByName.get(definition.filename)
               ? renderFile(primaryFilesByName.get(definition.filename)!)
               : renderMissingFile(definition))
             : primaryFiles.map(renderFile)}
         </div>
-        {usesCurrentWorkflow && (
-          <section className="optional-module-nav" aria-label="按需模块">
-            <div className="optional-module-heading">
-              <span>按需模块</span>
-              <small>按需要补充</small>
-            </div>
-            <button
-              type="button"
-              className={viewMode === "visual" ? "optional-module-button visual active" : "optional-module-button visual"}
-              aria-current={viewMode === "visual" ? "page" : undefined}
-              onClick={() => onViewModeChange?.("visual")}
-            >
-              <span className="optional-module-icon"><ImageSquare size={17} weight="duotone" /></span>
-              <span className="optional-module-copy"><strong>视觉参考</strong><small>需要 AI 封面或复杂画面时再填写</small></span>
-            </button>
-            <button
-              type="button"
-              className={viewMode === "risk" ? "optional-module-button risk active" : "optional-module-button risk"}
-              aria-current={viewMode === "risk" ? "page" : undefined}
-              onClick={() => onViewModeChange?.("risk")}
-            >
-              <span className="optional-module-icon"><ShieldCheck size={17} weight="duotone" /></span>
-              <span className="optional-module-copy"><strong>风险与来源</strong><small>事实、出处、授权和禁区</small></span>
-            </button>
-          </section>
-        )}
         {extraFiles.length > 0 && (
           <>
             <div className="pipeline-title secondary">

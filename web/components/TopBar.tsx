@@ -147,7 +147,7 @@ export function TopBar({ initialProfile }: TopBarProps) {
   return (
     <header className="control-bar">
       <div className="mobile-top-brand">
-        <span><img src="/brand-icon.png" alt="片策" /></span>
+        <span><img src="/brand-icon.png" width={30} height={30} alt="片策" /></span>
         <strong>片策</strong>
       </div>
       <div className="topbar-actions">

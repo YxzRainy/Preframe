@@ -185,8 +185,8 @@ export function AppSidebar({ initialWorkspace }: AppSidebarProps) {
       <aside className={`app-sidebar ${mobileOpen ? "open" : ""}`}>
         <div className="app-sidebar-brand">
           <span className="app-sidebar-logo" role="img" aria-label="片策">
-            <img className="app-sidebar-logo-dark" src="/brand-icon.png" alt="" />
-            <img className="app-sidebar-logo-light" src="/brand-icon-light.png" alt="" />
+            <img className="app-sidebar-logo-dark" src="/brand-icon.png" width={37} height={42} alt="" />
+            <img className="app-sidebar-logo-light" src="/brand-icon-light.png" width={37} height={42} alt="" style={{ display: "none" }} />
           </span>
           <div><strong>片策</strong></div>
         </div>

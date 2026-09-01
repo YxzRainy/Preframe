@@ -154,10 +154,11 @@ export function DocumentWorkspace({
               <FloppyDisk size={15} weight="bold" />{saveState === "saving" ? "保存中" : "保存"}
             </button>
           )}
-          <button className="secondary-button" type="button" disabled={!file} onClick={onCopy}><Copy size={15} weight="bold" />复制正文</button>
+          <button className="secondary-button document-copy-button" type="button" disabled={!file} onClick={onCopy}><Copy size={15} weight="bold" />复制正文</button>
           <details className="document-more-menu">
             <summary aria-label="更多操作" title="更多操作"><DotsThree size={20} weight="bold" /></summary>
             <div className="document-more-popover">
+              <button className="document-more-copy" type="button" disabled={!file} onClick={onCopy}><Copy size={16} />复制正文</button>
               <button className="export-control" data-export-current type="button" disabled={!file} onClick={onDownload}><DownloadSimple size={16} />导出当前文档</button>
               <button className="export-bundle-control" type="button" onClick={onDownloadAll}><Package size={16} />导出完整内容包</button>
               {canRegenerate && <button type="button" disabled={regenerating} onClick={onRegenerate}><ArrowClockwise size={16} />{regenerating ? "正在重新生成" : "重新生成异常文档"}</button>}
